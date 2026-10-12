@@ -68,7 +68,7 @@ args_json_for() { # hex-body -> JSON argument in the discovered encoding
     fi
 }
 
-printf '# Stand E2E report\n' >"$REPORT"
+printf '\n# Stand E2E report (scenario)\n' >>"$REPORT"
 log "date: $(date -u +%FT%TZ)"
 
 heading "Preflight"

@@ -286,15 +286,40 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           # gosh-sh/avm-sdk ships avm-local-stand and avm-contract-build as a
-          # release archive; its installer fetches the release with gh.
-          git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk
-          /tmp/avm-sdk/scripts/install.sh
+          # release archive; its installer fetches the release with gh. Output
+          # is captured into the stand report because workflow logs are not
+          # readable from every environment.
+          set +e
+          {
+            echo "## Install the AVM stand binaries"
+            echo '```text'
+            echo '$ git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk'
+            git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk 2>&1
+            echo "[exit $?]"
+            echo '$ /tmp/avm-sdk/scripts/install.sh'
+            /tmp/avm-sdk/scripts/install.sh 2>&1
+            echo "[exit $?]"
+            echo '```'
+          } >> stand-e2e-report.md
+          set -e
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
       - name: Build the contract with avm-contract-build
         run: |
-          avm-contract-build build --manifest-path Cargo.toml
-          ls -l target/avm
+          set +e
+          out="$(avm-contract-build build --manifest-path Cargo.toml 2>&1)"
+          status=$?
+          set -e
+          {
+            echo "## avm-contract-build"
+            echo '```text'
+            echo '$ avm-contract-build build --manifest-path Cargo.toml'
+            echo "$out"
+            echo "[exit $status]"
+            echo '```'
+            ls -l target/avm 2>&1
+          } >> stand-e2e-report.md
+          exit $status
 
       - name: Run the stand scenario
         run: bash scripts/stand-e2e.sh
