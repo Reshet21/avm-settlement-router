@@ -93,8 +93,8 @@ cargo +1.93.0 build --release --target wasm32-unknown-unknown
    malformed-image rejection, body codecs, identifier uniqueness.
 2. **Vendored SDK tests** (`vendor/avm-contract-sdk/tests/canonical_io.rs`) —
    the canonical `ACMI`/`ACMO`/`ACBI`/`ACBO` byte-level guarantees.
-   `scripts/check_consistency.py` additionally re-derives every method id and
-   event class from its name (`hash_u64_le` = BLAKE3-8LE).
+   `scripts/derive_ids.py --check` additionally re-derives every method id and
+   event class from its ABI name (`hash_u64_le` = BLAKE3-8LE).
 3. **Contract integration tests** (`tests/settlement_router.rs`) — build real
    canonical `ACMI` frames byte for byte, decode them with the shipped SDK
    decoder, run the contract, and encode the result with the shipped encoder.
@@ -139,8 +139,8 @@ by side; the hang channel is never exercised in tests because it never returns.
 
 - **Proven by CI** (GitHub Actions, pinned Rust 1.93.0, run `contract` on every
   push): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` on
-  host and `wasm32-unknown-unknown`, 46 tests passing — 12 vendored SDK
-  canonical-ABI tests, 23 router integration tests over canonical `ACMI`
+  host and `wasm32-unknown-unknown`, 48 tests passing — 12 vendored SDK
+  canonical-ABI tests, 25 router integration tests over canonical `ACMI`
   frames, 11 codec unit tests — plus a `wasm32-unknown-unknown` release build
   (50 KiB), a guest-export check, and a build-reproducibility check. The same
   integration suite also passes with `AVM_E2E_FAILURE_FLOW=1` (the failure-flow
@@ -154,13 +154,15 @@ by side; the hang channel is never exercised in tests because it never returns.
   `hash_u64_le(name)` — the first eight bytes of BLAKE3(name) little-endian —
   the same rule the platform uses (`CODE_UPGRADE_METHOD_ID` is
   `hash_u64_le("avm.code_upgrade")`). The rule reproduces the SDK's own fixture
-  constants exactly, and CI re-derives every constant on each run. See
+  constants exactly, and `scripts/derive_ids.py --check` re-derives every
+  constant from its ABI name on each CI run. See
   [`docs/method-ids.md`](docs/method-ids.md).
-- **Not yet proven**: the on-stand end-to-end journey (`deploy` / `call` /
-  `replay`), which needs the `avm-local-stand` and `avm-contract-build` release
-  binaries — they were not available in the authoring environment.
-  [`docs/using-the-stand.md`](docs/using-the-stand.md) has the exact
-  walkthrough.
+- **On-stand end-to-end** (`deploy` / `fund-user` / `route.set` / `settle` /
+  callback / `inspect` / `replay`): executed by the `stand-e2e` CI job against
+  the released `avm-local-stand` and `avm-contract-build` binaries on every
+  push, with the full command log posted to the pull request as
+  `stand-e2e-report.md`. The authoring sandbox cannot download those binaries,
+  so the job — not the author — is what closes this gap.
 
 ## Design notes
 
@@ -168,10 +170,11 @@ Two decisions came from constraints that are easy to get wrong:
 
 **Callback bodies are constrained by the canonical decoder.** A callback with a
 non-zero status must carry an *empty* body — the decoder rejects any other
-shape. A route key therefore cannot be reported back in the body of a bounced
-delivery. Both outcome classes are required to have an empty body, and the
-route key is taken from retained state, where `last_route_key` names the one
-settlement the callback may complete.
+shape — while a successful delivery may report the receiver's result body and
+return the unused fuel reserve as transferred value. A route key therefore
+cannot be reported back in the body of a bounced delivery, and it is taken from
+retained state either way: `last_route_key` names the one settlement the
+callback may complete.
 
 **One settlement in flight.** `last_status` uses `AWAITING_CALLBACK = u32::MAX`
 as a sentinel rather than `0`. AVM status codes are `0` or `≥ 1000`, so the
@@ -185,8 +188,12 @@ callback double-count.
 This is a deterministic fixture, not an audited application contract. Per the
 SDK's own guidance on its examples:
 
-- Replace `OWNER_PUBKEY` in `src/wire.rs`.
-- Replace every fixed route key, amount, event class, and method id.
+- The `OWNER_PUBKEY` fallback is the stand's `package-owner` identity key (so
+  the walkthrough works out of the box on the stand); `init` accepts an explicit
+  32-byte owner key in the deploy body. For an application, pin your own owner
+  through the deploy body or replace the fallback.
+- Replace every fixed route key and amount; to change a method or event,
+  rename it and let `hash_u64_le` pick the new id — never hand-pick one.
 - Read [`docs/method-ids.md`](docs/method-ids.md) — ids are name-derived
   (`hash_u64_le`), so renaming a method means recomputing its constant; the
   consistency check enforces this.

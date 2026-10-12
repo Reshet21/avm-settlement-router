@@ -320,9 +320,13 @@ pub fn completed(input: &MessageInput<'_>) -> MessageOutput {
     if callback.cause_address != input.destination || message.has_callback_request() {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
-    if message.value_main != 0 || message.extra.iter().next().is_some() {
-        return MessageOutput::failure(status::INVALID_CALLBACK);
-    }
+    // A delivery callback is an ordinary internal message: it may return the
+    // unused fuel reserve as transferred value (docs/fuel-and-fees.md), and a
+    // successful delivery carries the receiver's `callback_result_body` — the
+    // SDK fixtures return one. Both ride along untouched. Attribution is
+    // unaffected: the canonical decoder validates the callback header, exactly
+    // one settlement may be in flight, and the route key is taken from
+    // `last_route_key`, never from the callback payload.
     let Ok(mut state) = require_state(input) else {
         return MessageOutput::failure(status::INVALID_STATE);
     };
@@ -333,12 +337,12 @@ pub fn completed(input: &MessageInput<'_>) -> MessageOutput {
     if state.routed_count == 0 || state.last_status != AWAITING_CALLBACK {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
-    // The canonical decoder rejects a non-zero-status callback with any body,
-    // so a bounce cannot report its route key in one. Both outcome classes are
-    // therefore required to carry an empty body, and the route key is taken
-    // from retained state: `last_route_key` identifies the single settlement
-    // this callback may complete, guarded by the one-in-flight sentinel.
-    if !message.body.is_empty() {
+    // A bounce must carry an empty body — the canonical decoder enforces this
+    // for non-zero-status callbacks anyway — while a successful delivery may
+    // report its result in the body. Either way the route key comes from
+    // retained state: `last_route_key` identifies the single settlement this
+    // callback may complete, guarded by the one-in-flight sentinel.
+    if callback.status_code != 0 && !message.body.is_empty() {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
     let route_key = state.last_route_key;

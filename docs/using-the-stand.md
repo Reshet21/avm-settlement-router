@@ -84,13 +84,27 @@ avm-local-stand deploy \
   --fuel-fee-shells 1000 > deploy.json
 ```
 
-`init` installs the empty routing table: `routed_count = 0`, no routes, owner set
-to the build's `OWNER_PUBKEY`, `last_status = AWAITING_CALLBACK`.
+`init` installs the empty routing table: `routed_count = 0`, no routes,
+`last_status = AWAITING_CALLBACK`. The owner key is taken from the deploy
+message body when it carries exactly 32 bytes; `--init-json null` leaves the
+body empty and installs the documented fallback `OWNER_PUBKEY` in
+`src/wire.rs` — the stand's `package-owner` identity public key (the only stand
+identity key that is publicly known, exercised by the release-gated
+`examples/contract-a-v1` upgrade path). To pin the owner explicitly instead,
+pass the desired key as the deploy body via `--init-json` once the stand's JSON
+encoding for a `fixed_bytes(32)` body is confirmed.
+
+The scripted version of this whole walkthrough is `scripts/stand-e2e.sh`; the
+`stand-e2e` CI job runs it against the real stand binaries on every push and
+posts `stand-e2e-report.md` to the pull request.
 
 ## Install A Route
 
-Route administration is owner-only, so use the `developer` or `package-owner`
-identity that matches `OWNER_PUBKEY` in `src/wire.rs`. The body is
+Route administration is owner-only. Call it with `--identity package-owner`,
+which is the identity behind the fallback `OWNER_PUBKEY`. (The stand does not
+document its identity-to-key mapping; if the call answers `1603`, the
+`stand-e2e` report shows it and the owner key must be pinned through the
+deploy body instead — see above.) The body is
 `route_key[8] | dapp_id[32] | account_id[32] | min_value[16]`, 88 bytes:
 
 ```bash
@@ -108,7 +122,7 @@ avm-local-stand call \
   --address "$CONTRACT_ADDRESS" \
   --method settlement.router.route.set \
   --args-json "\"$BODY_HEX\"" \
-  --identity developer \
+  --identity package-owner \
   --value-main 0 --extra-currencies '' \
   --block-time 1800000020 --created-at 1800000019 \
   --expire-at 1800003619 --fuel-fee-shells 1000
@@ -170,7 +184,7 @@ avm-local-stand call \
   --address "$CONTRACT_ADDRESS" \
   --method settlement.router.withdraw \
   --args-json null \
-  --identity developer \
+  --identity package-owner \
   --value-main 0 --extra-currencies '' \
   --block-time 1800000040 --created-at 1800000039 \
   --expire-at 1800003639 --fuel-fee-shells 1000
@@ -202,7 +216,7 @@ avm-local-stand upgrade \
   --address "$CONTRACT_ADDRESS" \
   --selected-code-id "$SELECTED_CODE_ID" \
   --migration-payload-hex "$MIGRATION_HEX" \
-  --identity developer \
+  --identity package-owner \
   --block-time 1800000060 --created-at 1800000059 \
   --expire-at 1800003659 --fuel-fee-shells 1000
 ```

@@ -97,15 +97,21 @@ pub const ROUTE_EVENT_CLASS: u64 = 0x0b07_6b3d_59a4_889c;
 /// `hash_u64_le("settlement.router.withdrawn")`.
 pub const WITHDRAWN_EVENT_CLASS: u64 = 0xf322_0038_13d7_882c;
 
-/// Admin key authorized to change the routing table.
+/// Admin key authorized to change the routing table — the fallback owner.
 ///
-/// Test data. Replace it before this contract is used by an application; the
-/// stand derives its `developer`, `package-owner`, and `user` identities during
-/// `init`, and `withdraw` additionally requires the owner's account id to be
-/// the package-derived account for this contract's `dapp_id`.
+/// The value is the stand's `package-owner` identity public key, the only
+/// stand identity key that is publicly known and exercised by a release-gated
+/// fixture (`examples/contract-a-v1` uses it as `PACKAGE_OWNER_PUBKEY` for its
+/// code-upgrade path). Owner methods therefore run on the stand with
+/// `--identity package-owner`.
+///
+/// `init` may override it: a deploy whose message body is exactly 32 bytes
+/// installs those bytes as the owner key instead of this constant. The stand's
+/// `init` command reports the generated identity public keys, so a deployment
+/// can pin the owner explicitly and does not depend on this fallback.
 pub const OWNER_PUBKEY: [u8; 32] = [
-    0x4f, 0x9c, 0x21, 0xb7, 0x0e, 0xd5, 0x8a, 0x63, 0x19, 0xf4, 0x7c, 0x02, 0xbb, 0x6e, 0xd8, 0x35,
-    0xa1, 0x27, 0x5f, 0xc9, 0x04, 0x8b, 0xe6, 0x1d, 0x73, 0x50, 0xca, 0x9f, 0x28, 0x61, 0xd4, 0xab,
+    0x81, 0x39, 0x77, 0x0e, 0xa8, 0x7d, 0x17, 0x5f, 0x56, 0xa3, 0x54, 0x66, 0xc3, 0x4c, 0x7e, 0xcc,
+    0xcb, 0x8d, 0x8a, 0x91, 0xb4, 0xee, 0x37, 0xa2, 0x5d, 0xf6, 0x0f, 0x5b, 0x8f, 0xc9, 0xb3, 0x94,
 ];
 
 /// Ordinary SHELL carried as extra currency.

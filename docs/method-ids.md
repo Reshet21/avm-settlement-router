@@ -28,6 +28,8 @@ name equals the constant checked into `gosh-sh/avm-sdk`:
 | Name | Constant in the SDK | `hash_u64_le` |
 | --- | --- | --- |
 | `causal.a.version` | `0x0dc1fee693a5219c` (contract-a-v1) | ✅ match |
+| `causal.a.deploy` | `0x1608e0e0319b4d0f` (contract-a-v1) | ✅ match |
+| `causal.b.drain` | `0x4c2d0105ca924509` (contract-b) | ✅ match |
 | `causal.a.forwarded` | `0x71228a3dc1799631` (contract-b, event class) | ✅ match |
 | `causal.a.state` | `0x127e58f93e9d40f8` (contract-b, event class) | ✅ match |
 | `avm.code_upgrade` | `0xc2c6c51bc610249d` (`avm-contract-sdk`) | ✅ match |
@@ -57,11 +59,13 @@ Every constant in `src/wire.rs` is `hash_u64_le` of its name:
 
 ## No drift, ever
 
-`scripts/check_consistency.py` recomputes `hash_u64_le` for every constant
-above and fails the build if a number and its name ever disagree. It also
-re-checks the four witness rows first, so if the derivation rule itself is ever
-wrong, the check says so explicitly instead of failing obscurely. The check
-runs in CI on every push (it needs the `blake3` Python module).
+`scripts/derive_ids.py --check` takes every method and event name from
+`avm-contract.toml`, recomputes `hash_u64_le` for each, and fails if the
+matching constant in `src/wire.rs` is missing, unannotated, or disagrees; it
+re-checks the six witness rows first, so if the derivation rule itself is ever
+wrong, the check says so explicitly instead of failing obscurely. A method
+added to the ABI without a named constant fails the same check. It runs in CI
+on every push (it needs the `blake3` Python module):
 
 ## Reproducing a single number
 

@@ -45,14 +45,31 @@ use wire::SETTLE_METHOD_ID;
 pub struct SettlementRouter;
 
 impl Contract for SettlementRouter {
-    /// Installs the empty routing table for a freshly deployed account.
+    /// Installs the routing table for a freshly deployed account.
+    ///
+    /// The owner key is taken from the deploy message body when it carries
+    /// exactly 32 bytes and falls back to the documented stand default
+    /// ([`router::owner_pubkey`]) when the body is empty; any other length is
+    /// rejected so a garbled deploy cannot install an unintended owner. The
+    /// ABI's status set is fixed, so malformed install arguments answer
+    /// `INVALID_SETTLEMENT`.
     ///
     /// Initialization runs once, on the deploy message, and answers with a
     /// [`StateUpdate::FullReplace`] image. The SDK forbids callback intents,
     /// callback result bodies, and code-upgrade intents during initialization,
     /// so this path emits state only.
-    fn init(_input: MessageInput<'_>) -> MessageOutput {
-        MessageOutput::success(StateUpdate::FullReplace(initial_state_bytes()))
+    fn init(input: MessageInput<'_>) -> MessageOutput {
+        let body = input.message.body();
+        let owner = if body.is_empty() {
+            router::owner_pubkey()
+        } else if body.len() == 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(body);
+            key
+        } else {
+            return MessageOutput::failure(status::INVALID_SETTLEMENT);
+        };
+        MessageOutput::success(StateUpdate::FullReplace(RouterState::initial(owner).to_bytes()))
     }
 
     /// Routes a settlement, administers the table, or records a callback.

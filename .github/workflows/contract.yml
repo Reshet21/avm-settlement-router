@@ -53,10 +53,11 @@ jobs:
 
       - name: Static consistency checks
         run: |
-          # The consistency check re-derives every method id and event class
-          # from its name with BLAKE3, so the blake3 module is required.
+          # derive_ids.py re-derives every method id and event class from its
+          # ABI name with BLAKE3, so the blake3 module is required.
           python3 -m pip install --quiet blake3
           python3 scripts/check_consistency.py
+          python3 scripts/derive_ids.py --check
           python3 scripts/model_state.py
 
       - name: Vet the vendored SDK is byte-identical to its source
@@ -264,3 +265,71 @@ jobs:
           git add ci-debug.log
           git commit -m "ci-debug: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
           git push -f origin ci-debug
+
+  stand-e2e:
+    name: avm-contract-build + avm-local-stand
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Check out the contract
+        uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+          rustup target list --installed | grep wasm32-unknown-unknown
+
+      - name: Install the AVM stand binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gosh-sh/avm-sdk ships avm-local-stand and avm-contract-build as a
+          # release archive; its installer fetches the release with gh.
+          git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk
+          /tmp/avm-sdk/scripts/install.sh
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the contract with avm-contract-build
+        run: |
+          avm-contract-build build --manifest-path Cargo.toml
+          ls -l target/avm
+
+      - name: Run the stand scenario
+        run: bash scripts/stand-e2e.sh
+
+      - name: Publish the stand report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The scenario writes stand-e2e-report.md; publish it where the
+          # workflow-log hosts cannot reach: a pull request comment and the
+          # ci-debug branch.
+          REPORT=stand-e2e-report.md
+          if [ ! -f "$REPORT" ]; then
+            echo "## Stand E2E report" > "$REPORT"
+            echo "The scenario produced no report; see the job's build steps." >> "$REPORT"
+            echo "<!-- ci-stand-e2e -->" >> "$REPORT"
+          fi
+          grep -q '<!-- ci-stand-e2e -->' "$REPORT" || echo '<!-- ci-stand-e2e -->' >> "$REPORT"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            PR="${GITHUB_REF_NAME%%/*}"
+            comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- ci-stand-e2e -->"))][0].id // empty' 2>/dev/null || true)"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+                -F body=@"$REPORT" || echo "warning: could not update the stand report comment" >&2
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                -F body=@"$REPORT" || echo "warning: could not post the stand report comment" >&2
+            fi
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-stand-report || git checkout ci-stand-report
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add "$REPORT"
+          git commit -m "stand-e2e report: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
+          git push -f origin HEAD:ci-stand-report

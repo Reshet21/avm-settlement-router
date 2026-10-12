@@ -341,6 +341,48 @@ fn init_installs_the_declared_state_image() {
     assert!(decoded.routes.is_empty());
 }
 
+/// The deploy body may install an explicit owner key; anything other than
+/// empty or exactly 32 bytes is refused instead of guessing.
+#[test]
+fn init_installs_an_owner_key_from_the_deploy_body() {
+    let custom_owner = [0x5a; 32];
+    let destination = router_address();
+    let message = external_message(custom_owner, destination, 0, 0, &custom_owner, &[], true);
+    let bytes = message_input(
+        1,
+        [0; 32],
+        [0; 32],
+        custom_owner,
+        destination,
+        0,
+        &[],
+        &[],
+        &message,
+    );
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    let output = SettlementRouter::init(input);
+    assert_eq!(output.status_code, 0);
+    let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
+    assert_eq!(decoded.owner_pubkey, custom_owner);
+    assert_ne!(decoded.owner_pubkey, router::owner_pubkey());
+
+    // A garbled deploy body must not install half a key.
+    let message = external_message(custom_owner, destination, 0, 0, &[0x5a; 31], &[], true);
+    let bytes = message_input(
+        1,
+        [0; 32],
+        [0; 32],
+        custom_owner,
+        destination,
+        0,
+        &[],
+        &[],
+        &message,
+    );
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    assert_eq!(SettlementRouter::init(input).status_code, status::INVALID_SETTLEMENT);
+}
+
 #[test]
 fn settle_forwards_the_full_value_and_requests_a_callback() {
     let bytes = external_input(
@@ -504,8 +546,8 @@ fn callback_records_a_completed_settlement_and_rejects_a_replay() {
     );
     let pending = state_of(&run(&routed));
 
-    // A delivered settlement reports a zero status, which the canonical decoder
-    // only accepts with an empty body.
+    // A delivered settlement reports a zero status; the canonical decoder
+    // accepts an empty body here, and the fixture keeps the delivery quiet.
     let delivered = internal_input(
         beneficiary_address(),
         avm_settlement_router::wire::CALLBACK_METHOD_ID,
@@ -544,18 +586,6 @@ fn callback_records_a_completed_settlement_and_rejects_a_replay() {
         &settled,
     );
     assert_eq!(run(&replay).status_code, status::INVALID_CALLBACK);
-
-    // A delivered callback may not smuggle a body.
-    let with_body = internal_input(
-        beneficiary_address(),
-        avm_settlement_router::wire::CALLBACK_METHOD_ID,
-        0,
-        &ROUTE_KEY,
-        Some(([0xab; 32], 0)),
-        None,
-        &pending,
-    );
-    assert_eq!(run(&with_body).status_code, status::INVALID_CALLBACK);
 }
 
 #[test]
@@ -692,8 +722,11 @@ fn only_one_settlement_may_be_in_flight() {
     assert_eq!(state.last_status, AWAITING_CALLBACK);
 }
 
+/// A callback needs an internal caller and a settlement in flight. Transferred
+/// value is not a reason to reject it: delivery callbacks legally return the
+/// unused fuel reserve.
 #[test]
-fn callback_needs_an_internal_caller_and_no_transferred_value() {
+fn callback_needs_an_internal_caller_and_a_settlement_in_flight() {
     let routed = external_input(
         STRANGER_PUBKEY,
         avm_settlement_router::wire::SETTLE_METHOD_ID,
@@ -718,16 +751,100 @@ fn callback_needs_an_internal_caller_and_no_transferred_value() {
     );
     assert_eq!(run(&external).status_code, status::INVALID_CALLBACK);
 
-    let value_carrying = internal_input(
+    // With nothing in flight there is nothing this callback may complete.
+    let stray = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::CALLBACK_METHOD_ID,
+        0,
+        &[],
+        Some(([0xab; 32], 0)),
+        None,
+        &seeded_state(),
+    );
+    assert_eq!(run(&stray).status_code, status::INVALID_CALLBACK);
+}
+
+/// Regression: a successful delivery legally carries the receiver's result
+/// body and returns the unused fuel reserve as transferred value. Accepting it
+/// must complete the settlement and clear the in-flight sentinel — otherwise
+/// every later `settle` is stuck on `SETTLEMENT_PENDING` forever.
+#[test]
+fn callback_with_a_body_and_returned_value_completes_the_settlement() {
+    let routed = external_input(
+        STRANGER_PUBKEY,
+        avm_settlement_router::wire::SETTLE_METHOD_ID,
+        500,
+        &settle_body(),
+        0,
+        &[],
+        &[],
+        &seeded_state(),
+    );
+    let pending = state_of(&run(&routed));
+
+    let delivered = internal_input(
         beneficiary_address(),
         avm_settlement_router::wire::CALLBACK_METHOD_ID,
         7,
-        &[],
+        &[0x99; 16],
         Some(([0xab; 32], 0)),
         None,
         &pending,
     );
-    assert_eq!(run(&value_carrying).status_code, status::INVALID_CALLBACK);
+    let output = run(&delivered);
+    assert_eq!(output.status_code, 0);
+    let settled = state_of(&output);
+    let state = RouterState::from_bytes(&settled).expect("image decodes");
+    assert_eq!(state.completed_count, 1);
+    assert_eq!(state.failed_count, 0);
+    assert_eq!(state.last_status, 0);
+
+    // The sentinel is cleared, so the next settlement routes normally.
+    let next = external_input(
+        STRANGER_PUBKEY,
+        avm_settlement_router::wire::SETTLE_METHOD_ID,
+        700,
+        &settle_body(),
+        0,
+        &[],
+        &[],
+        &settled,
+    );
+    let forwarded = run(&next);
+    assert_eq!(forwarded.status_code, 0);
+    assert_eq!(forwarded.outbound_intents[0].value_main, 700);
+
+    // A bounce may return the reserve too; the decoder still requires its body
+    // to be empty, and the contract attributes the route key from state.
+    let pending_again = state_of(&forwarded);
+    let bounced = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::CALLBACK_METHOD_ID,
+        7,
+        &[],
+        Some(([0xcd; 32], 1600)),
+        None,
+        &pending_again,
+    );
+    let outcome = run(&bounced);
+    assert_eq!(outcome.status_code, 0);
+    let recorded = RouterState::from_bytes(&state_of(&outcome)).expect("image decodes");
+    assert_eq!(recorded.completed_count, 1);
+    assert_eq!(recorded.failed_count, 1);
+    assert_eq!(recorded.last_status, 1600);
+
+    // A bounce that still smuggles a body is refused — and the canonical
+    // decoder refuses such a frame before the contract even sees it.
+    let smuggled = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::CALLBACK_METHOD_ID,
+        7,
+        &ROUTE_KEY,
+        Some(([0xcd; 32], 1600)),
+        None,
+        &pending_again,
+    );
+    assert!(decode_message_input(&smuggled).is_err());
 }
 
 #[test]
