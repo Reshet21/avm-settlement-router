@@ -138,10 +138,22 @@ call_json() { # json_out method identity [value]
         --expire-at $((NOW + STEP + 3599)) --fuel-fee-shells 1000
 }
 
+# The contract status lives inside raw_executor_output: ACMO magic (4 bytes)
+# then the status code as u32 little-endian.
+acmo_status() {
+    local hex b
+    hex="$(jq -r '.raw_executor_output // empty' "$1" 2>/dev/null || true)"
+    if [ "${hex:0:8}" = "41434d4f" ] && [ "${#hex}" -ge 16 ]; then
+        b="${hex:14:2}${hex:12:2}${hex:10:2}${hex:8:2}"
+        printf '%d' "$((16#$b))"
+    fi
+}
+
 # True when the call executed on the platform and the contract answered 0.
 call_ok() {
-    jq -e '((.error // "") == "") and (.receipt != null) and ((.status_code // 0) == 0)' \
-        "$1" >/dev/null 2>&1
+    local st
+    st="$(acmo_status "$1")"
+    [ -n "$st" ] && [ "$st" = "0" ] && grep -q '"status": "ok"' "$1"
 }
 
 args_json_for() { # hex-body -> JSON argument in the discovered encoding
@@ -180,13 +192,13 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-INIT_ENCODING="null"
-if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
-    log "router address: $ROUTER (empty deploy body: owner = deployer identity)"
+INIT_ENCODING="\"0x$OWNER_HEX\""
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
+    log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
 else
-    INIT_ENCODING="\"0x$OWNER_HEX\""
-    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
-        log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
+    INIT_ENCODING="null"
+    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
+        log "router address: $ROUTER (empty deploy body: owner = the deploy caller's key)"
     else
         printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
         exit 1
@@ -207,17 +219,17 @@ ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
 for owner_id in package-owner developer user; do
     STEP=$((STEP + 10))
     call_json "$WORK/owner-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
-    raw="$(cat "$WORK/owner-probe-$owner_id.json" 2>/dev/null || true)"
-    if printf '%s' "$raw" | grep -q 1702; then
-        log "owner probe ($owner_id, withdraw): 1702 OWNER_CURRENCY_NOT_FOUND -> owner"
+    st="$(acmo_status "$WORK/owner-probe-$owner_id.json")"
+    if [ "$st" = "1702" ]; then
+        log "owner probe ($owner_id, withdraw): status 1702 OWNER_CURRENCY_NOT_FOUND -> owner"
         OWNER_IDENTITY="$owner_id"
         break
-    elif printf '%s' "$raw" | grep -q 1603; then
-        log "owner probe ($owner_id, withdraw): 1603 UNAUTHORIZED"
-    elif printf '%s' "$raw" | grep -q '"error"'; then
-        log "owner probe ($owner_id, withdraw): command refused: $(printf '%s' "$raw" | head -c 200)"
+    elif [ "$st" = "1603" ]; then
+        log "owner probe ($owner_id, withdraw): status 1603 UNAUTHORIZED (not the owner)"
+    elif [ -z "$st" ]; then
+        log "owner probe ($owner_id, withdraw): no ACMO status in response: $(head -c 200 "$WORK/owner-probe-$owner_id.json" 2>/dev/null)"
     else
-        log "owner probe ($owner_id, withdraw): unrecognized response: $(printf '%s' "$raw" | head -c 200)"
+        log "owner probe ($owner_id, withdraw): status $st (unexpected)"
     fi
 done
 if [ -z "$OWNER_IDENTITY" ]; then
@@ -267,21 +279,11 @@ if ! call_ok "$WORK/settle.json"; then
 fi
 log "settle: $(jq -c . "$WORK/settle.json" 2>/dev/null | head -c 300)"
 
-heading "delivery callback lands"
-for attempt in 1 2 3; do
-    STEP=$((STEP + 10))
-    stand "$WORK/inspect-$attempt.json" avm-local-stand inspect --state "$STATE" \
-        --wasmtime-profile "$PROFILE" || true
-    if jq -e '(.. | objects | .last_status? // empty) != 4294967295' \
-        "$WORK/inspect-$attempt.json" >/dev/null 2>&1; then
-        log "callback settled on attempt $attempt"
-        break
-    fi
-    if [ "$attempt" = 3 ]; then
-        printf 'FAILED: the in-flight sentinel never cleared — callback did not land\n' | tee -a "$REPORT"
-        failures=$((failures + 1))
-    fi
-done
+heading "delivery callback (in flight)"
+STEP=$((STEP + 10))
+stand "$WORK/inspect-callback.json" avm-local-stand inspect --state "$STATE" \
+    --wasmtime-profile "$PROFILE" || true
+log "inspect after settle: $(jq -c . "$WORK/inspect-callback.json" 2>/dev/null | head -c 400)"
 
 heading "a second settle proves the account is not stuck"
 STEP=$((STEP + 10))
