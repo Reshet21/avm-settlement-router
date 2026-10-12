@@ -27,7 +27,7 @@ WORK="$(mktemp -d)"
 STATE="$WORK/developer.state"
 PROFILE="${AVM_PROFILE:-${AVM_SDK_HOME:-$HOME/.local/share/avm-sdk}/current/profiles/wasmtime-release-profile.v1}"
 ARTIFACTS="${ARTIFACTS:-$ROOT/target/avm}"
-DAPP_ID="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+DAPP_ID="1111111111111111111111111111111111111111111111111111111111111111"
 ROUTE_KEY_HEX="726f7574652d3031" # "route-01"
 MIN_VALUE=100
 SETTLE_VALUE=500
@@ -46,7 +46,10 @@ stand() {
     local json_out="${1:-}"
     shift
     printf '\n```text\n$ %s\n' "$*" >>"$REPORT"
-    local status
+    local status errexit_was_on=0
+    if [[ $- == *e* ]]; then
+        errexit_was_on=1
+    fi
     set +e
     if [ -n "$json_out" ]; then
         "$@" >"$json_out" 2>"$WORK/last-stderr"
@@ -57,7 +60,11 @@ stand() {
         status=$?
         cat "$WORK/last-stdout" >>"$REPORT"
     fi
-    set -e
+    if [ "$errexit_was_on" = 1 ]; then
+        set -e
+    else
+        set +e
+    fi
     if [ -s "$WORK/last-stderr" ]; then
         printf -- '--- stderr ---\n' >>"$REPORT"
         cat "$WORK/last-stderr" >>"$REPORT"
@@ -126,9 +133,15 @@ call_json() { # json_out method identity [value]
     local json_out="$1" method="$2" identity="$3" value="${4:-0}"
     stand "$json_out" avm-local-stand call --state "$STATE" --wasmtime-profile "$PROFILE" \
         --address "$ROUTER" --method "$method" --args-json "${ARGS_JSON:-null}" \
-        --identity "$identity" --value-main "$value" \
-        --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
+        --identity "$identity" --value-main "$value" --extra-currencies '' \
+        --block-time $((NOW + STEP)) --created-at $((NOW + STEP - 1)) \
+        --expire-at $((NOW + STEP + 3599)) --fuel-fee-shells 1000
+}
+
+# True when the call executed on the platform and the contract answered 0.
+call_ok() {
+    jq -e '((.error // "") == "") and (.receipt != null) and ((.status_code // 0) == 0)' \
+        "$1" >/dev/null 2>&1
 }
 
 args_json_for() { # hex-body -> JSON argument in the discovered encoding
@@ -159,9 +172,6 @@ if [ -z "$OWNER_HEX" ]; then
 fi
 log "package-owner key from init.json: $OWNER_HEX"
 log "init.json: $(jq -c . "$WORK/init.json" 2>/dev/null || true)"
-set +e
-stand /dev/null avm-local-stand call --help
-set -e
 
 heading "deploy the router (owner = the deploying identity)"
 # The stand generates fresh identity keys at every init, so the router takes
@@ -182,17 +192,32 @@ else
         exit 1
     fi
 fi
+# Call-path smoke test with the exact canonical shape from the SDK
+# getting-started (no args): proves the charge/exec path before we trust any
+# probe verdicts.
+HEX_STYLE="0x"
+ARGS_JSON="null"
+STEP=$((STEP + 10))
+call_json "$WORK/version.json" settlement.router.version user 0 || true
+log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 400)"
+
 # Owner probe: `withdraw` answers 1702 OWNER_CURRENCY_NOT_FOUND to the owner
 # and 1603 UNAUTHORIZED to anyone else, without touching the routing table.
-HEX_STYLE="0x"
 ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
 for owner_id in package-owner developer user; do
+    STEP=$((STEP + 10))
     call_json "$WORK/owner-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
-    probe_status="$(jq -r '.status_code // empty' "$WORK/owner-probe-$owner_id.json" 2>/dev/null || true)"
-    log "owner probe ($owner_id, withdraw): status ${probe_status:-command-failed}"
-    if [ "$probe_status" = "1702" ]; then
+    raw="$(cat "$WORK/owner-probe-$owner_id.json" 2>/dev/null || true)"
+    if printf '%s' "$raw" | grep -q 1702; then
+        log "owner probe ($owner_id, withdraw): 1702 OWNER_CURRENCY_NOT_FOUND -> owner"
         OWNER_IDENTITY="$owner_id"
         break
+    elif printf '%s' "$raw" | grep -q 1603; then
+        log "owner probe ($owner_id, withdraw): 1603 UNAUTHORIZED"
+    elif printf '%s' "$raw" | grep -q '"error"'; then
+        log "owner probe ($owner_id, withdraw): command refused: $(printf '%s' "$raw" | head -c 200)"
+    else
+        log "owner probe ($owner_id, withdraw): unrecognized response: $(printf '%s' "$raw" | head -c 200)"
     fi
 done
 if [ -z "$OWNER_IDENTITY" ]; then
@@ -225,21 +250,22 @@ if ! call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0; then
     ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
     call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0 || true
 fi
-if jq -e '(.status_code // 0) != 0 or .error' "$WORK/route.json" >/dev/null 2>&1; then
+if ! call_ok "$WORK/route.json"; then
     printf 'FAILED: route.set did not succeed — owner identity check is not closed\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
-log "args encoding in use: $HEX_STYLE hex"
+log "args encoding in use: $HEX_STYLE hex; route.set: $(jq -c . "$WORK/route.json" 2>/dev/null | head -c 300)"
 
 heading "settle (user identity)"
 SETTLE_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}"
 ARGS_JSON="$(args_json_for "$SETTLE_ARGS")"
 STEP=$((STEP + 10))
 call_json "$WORK/settle.json" settlement.router.settle user "$SETTLE_VALUE" || true
-if jq -e '(.status_code // 0) != 0 or .error' "$WORK/settle.json" >/dev/null 2>&1; then
+if ! call_ok "$WORK/settle.json"; then
     printf 'FAILED: settle did not succeed\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
+log "settle: $(jq -c . "$WORK/settle.json" 2>/dev/null | head -c 300)"
 
 heading "delivery callback lands"
 for attempt in 1 2 3; do
@@ -260,10 +286,11 @@ done
 heading "a second settle proves the account is not stuck"
 STEP=$((STEP + 10))
 call_json "$WORK/settle2.json" settlement.router.settle user $((SETTLE_VALUE + 200)) || true
-if jq -e '(.status_code // 0) != 0 or .error' "$WORK/settle2.json" >/dev/null 2>&1; then
+if ! call_ok "$WORK/settle2.json"; then
     printf 'FAILED: the second settle was refused\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
+log "second settle: $(jq -c . "$WORK/settle2.json" 2>/dev/null | head -c 300)"
 
 heading "inspect, events, and replay"
 STEP=$((STEP + 10))
