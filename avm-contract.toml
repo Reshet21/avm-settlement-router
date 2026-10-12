@@ -1,0 +1,135 @@
+# Canonical AVM contract metadata for the settlement router.
+#
+# `avm-contract-build` reads this file from the contract directory, validates it
+# against the compiled WASM, and emits `contract.acab` (canonical ABI bytes) and
+# `contract.descriptor` (canonical code descriptor) next to `contract.wasm`.
+
+[descriptor]
+execution_mode = "message_isolated"
+state_schema_id = "5e7172149c03ab582f67d410c8b359e27a1406df3b95e28c71a46d0f8b23c196"
+
+[abi]
+# The state root is one opaque fixed-size image. The router never answers with a
+# `DataPatchList`, so the declared length is the length every successful
+# execution writes. See `src/state.rs` for the byte-level layout.
+state_root_type_id = 1
+
+# --- types -------------------------------------------------------------------
+
+[[abi.types]]
+id = 1
+kind = "fixed_bytes"
+name = "settlement_router_state"
+len = 448
+
+# settle: route_key[8] | beneficiary_dapp[32] | beneficiary_account[32]
+[[abi.types]]
+id = 2
+kind = "fixed_bytes"
+name = "settlement_router_settle_args"
+len = 72
+
+# route.set: route_key[8] | dapp[32] | account[32] | min_value[16]
+[[abi.types]]
+id = 3
+kind = "fixed_bytes"
+name = "settlement_router_route_args"
+len = 88
+
+# route.clear and the delivery callback: route_key[8]
+[[abi.types]]
+id = 4
+kind = "fixed_bytes"
+name = "settlement_router_route_key"
+len = 8
+
+# --- methods -----------------------------------------------------------------
+#
+# `settlement.router.completed` is the callback handler named by the router's own
+# callback request; it is delivered as an internal callback, not called
+# externally. `withdraw` and `version` take no arguments.
+#
+# The numeric method ids the contract branches on are fixed in `src/wire.rs`.
+# Read `docs/method-ids.md` before deploying.
+
+[[abi.methods]]
+name = "settlement.router.settle"
+input_type_id = 2
+
+[[abi.methods]]
+name = "settlement.router.completed"
+input_type_id = 4
+
+[[abi.methods]]
+name = "settlement.router.route.set"
+input_type_id = 3
+
+[[abi.methods]]
+name = "settlement.router.route.clear"
+input_type_id = 4
+
+[[abi.methods]]
+name = "settlement.router.withdraw"
+
+[[abi.methods]]
+name = "settlement.router.version"
+
+# --- errors ------------------------------------------------------------------
+#
+# The SDK reserves status codes 1..1000 for the runtime, so every contract code
+# is 0 or at least 1000.
+
+[[abi.errors]]
+status_code = 1600
+name = "invalid_settlement"
+message = "settlement arguments, beneficiary, or transferred value are invalid"
+
+[[abi.errors]]
+status_code = 1601
+name = "unknown_route"
+message = "no routing table entry matches the requested route key"
+
+[[abi.errors]]
+status_code = 1602
+name = "invalid_router_state"
+message = "router state image is malformed, exhausted, or in the wrong output mode"
+
+[[abi.errors]]
+status_code = 1603
+name = "unauthorized"
+message = "caller is not authorized for this method"
+
+[[abi.errors]]
+status_code = 1604
+name = "invalid_callback"
+message = "callback context, route key, or result body is malformed"
+
+[[abi.errors]]
+status_code = 1605
+name = "invalid_route_args"
+message = "route arguments are invalid or the routing table is full"
+
+[[abi.errors]]
+status_code = 1606
+name = "invalid_version_probe"
+message = "version probe requires one external empty-body call on version 1"
+
+[[abi.errors]]
+status_code = 1607
+name = "invalid_code_upgrade"
+message = "code upgrade authorization or migration payload is invalid"
+
+[[abi.errors]]
+status_code = 1608
+name = "nothing_to_withdraw"
+message = "the router holds no main value and no extra currency"
+
+[[abi.errors]]
+status_code = 1609
+name = "event_encoding"
+message = "an event field list could not be canonically encoded"
+
+[[abi.errors]]
+status_code = 1610
+name = "settlement_pending"
+message = "a routed settlement is still awaiting its callback"

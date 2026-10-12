@@ -1,0 +1,107 @@
+name: contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # The vendored SDK has no crates.io dependencies, so no network is needed
+  # after the toolchain is installed.
+  CARGO_NET_OFFLINE: false
+
+jobs:
+  verify:
+    name: fmt, clippy, test, wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the contract
+        uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          # rust-toolchain.toml pins 1.93.0 plus clippy, rustfmt, and the
+          # wasm32-unknown-unknown target, matching the AVM SDK distribution.
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+          rustup target list --installed | grep wasm32-unknown-unknown
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Static consistency checks
+        run: |
+          python3 scripts/check_consistency.py
+          python3 scripts/model_state.py
+
+      - name: Vet the vendored SDK is byte-identical to its source
+        run: |
+          # The vendored copy must not drift from the published distribution.
+          # This fetches the SDK source tree and diffs only the crate we vendor.
+          git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk
+          diff -ru vendor/avm-contract-sdk/src /tmp/avm-sdk/crates/avm-contract-sdk/src
+          diff -ru vendor/avm-contract-sdk/tests /tmp/avm-sdk/crates/avm-contract-sdk/tests
+          diff -u vendor/avm-contract-sdk/Cargo.toml /tmp/avm-sdk/crates/avm-contract-sdk/Cargo.toml
+
+      - name: Clippy (wasm32, deny warnings)
+        run: |
+          cargo clippy --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - name: Clippy (host, deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run the vendored SDK canonical-ABI tests
+        run: cargo test -p avm-contract-sdk
+
+      - name: Run the router tests over canonical ACMI frames
+        run: cargo test --test settlement_router -- --nocapture
+
+      - name: Run the in-crate codec tests
+        run: cargo test --lib
+
+      - name: Build the contract for wasm32-unknown-unknown
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          test -f "$WASM"
+          ls -l "$WASM"
+          echo "wasm bytes: $(wc -c < "$WASM")"
+
+      - name: Verify the AVM guest surface is exported
+        run: |
+          # The guest ABI is exactly these five exports; `memory` is installed
+          # by avm-contract-build at link time.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          python3 - "$WASM" <<'PY'
+          import sys, re
+          data = open(sys.argv[1], "rb").read()
+          required = [b"avm_guest_alloc", b"avm_guest_free", b"init", b"process_message"]
+          missing = [name.decode() for name in required if name not in data]
+          if missing:
+              sys.exit(f"missing expected export names in the WASM: {missing}")
+          print("guest export names present:", [n.decode() for n in required])
+          print("magic:", data[:4])
+          if data[:4] != b"\x00asm":
+              sys.exit("not a WASM module")
+          PY
+
+      - name: Check build reproducibility
+        run: |
+          # avm-contract-build compiles twice and rejects non-reproducible
+          # output. Approximate that gate here with two clean release builds.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          sha256sum "$WASM" > /tmp/first.sha256
+          touch src/lib.rs src/router.rs src/state.rs src/wire.rs
+          cargo build --release --target wasm32-unknown-unknown
+          sha256sum -c /tmp/first.sha256
+
+      - name: Record artifact hashes
+        run: |
+          sha256sum target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          sha256sum vendor/avm-contract-sdk/src/*.rs

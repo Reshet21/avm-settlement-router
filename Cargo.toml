@@ -1,0 +1,37 @@
+[package]
+name = "avm-settlement-router"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86.0"
+license = "MIT"
+description = "Acki Nacki AVM contract that routes settlement value to an owner-administered routing table"
+readme = "README.md"
+keywords = ["acki-nacki", "avm", "contract", "settlement", "wasm"]
+categories = ["cryptography::cryptocurrencies"]
+
+[lib]
+# `cdylib` is what `avm-contract-build` turns into `contract.wasm` for the
+# wasm32-unknown-unknown target. `rlib` is what the native integration tests in
+# `tests/` link against, so the same crate is both the shipped contract and a
+# testable library.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+avm-contract-sdk = { path = "vendor/avm-contract-sdk" }
+
+[profile.release]
+# Deterministic, size-conscious release build. `avm-contract-build` compiles the
+# contract twice and rejects non-reproducible output, so nothing here may depend
+# on the build environment.
+#
+# `panic` is deliberately left at its default. Setting `panic = "abort"` here
+# would make `cargo test --release` fail to build, because the test harness
+# requires unwinding. Contract traps are handled by the runtime regardless.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+overflow-checks = true
+
+[workspace]
+members = [".", "vendor/avm-contract-sdk"]

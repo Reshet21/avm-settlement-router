@@ -1,0 +1,23 @@
+# Build output. `avm-contract-build` writes contract.wasm, contract.acab, and
+# contract.descriptor under target/avm; artifacts are reproducible from source
+# and the release process records their hashes, so none of it is committed.
+/target
+**/target
+
+# Local AVM stand state and JSON captures from the getting-started workflow.
+*.state
+developer.state
+init.json
+deploy.json
+funding-required.json
+
+# Python byte-code from the static check scripts.
+__pycache__/
+*.pyc
+
+# Editor and OS noise.
+.DS_Store
+*.swp
+*~
+.idea/
+.vscode/
