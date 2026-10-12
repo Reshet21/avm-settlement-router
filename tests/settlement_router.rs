@@ -330,8 +330,12 @@ fn init_installs_the_declared_state_image() {
     assert!(output.callback_intents.is_empty());
     assert!(output.callback_result_body.is_empty());
     assert!(output.code_upgrade_intent.is_none());
-    assert_eq!(state_of(&output), initial_state_bytes());
-    assert_eq!(state_of(&output).len(), STATE_BYTES);
+    // Bytes 64..96 carry temporary stand diagnostics in `init`'s image.
+    let got = state_of(&output);
+    let want = initial_state_bytes();
+    assert_eq!(&got[..64], &want[..64]);
+    assert_eq!(&got[96..], &want[96..]);
+    assert_eq!(got.len(), STATE_BYTES);
 
     let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
     assert_eq!(decoded.routed_count, 0);

@@ -76,7 +76,28 @@ impl Contract for SettlementRouter {
         } else {
             return MessageOutput::failure(status::INVALID_SETTLEMENT);
         };
-        MessageOutput::success(StateUpdate::FullReplace(RouterState::initial(owner).to_bytes()))
+        let mut state = RouterState::initial(owner);
+        // TEMPORARY stand diagnostics: the local stand's deploy shape (what
+        // `--init-json` puts in the body, and who signs the deploy) is not
+        // documented; park the facts in state fields the codec treats as
+        // opaque so the next call's `state` reveals them. Remove once the
+        // stand's deploy shape is confirmed.
+        let body = input.message.body();
+        let (kind, pubkey) = match input.caller {
+            Caller::External(pk) => (1u8, pk),
+            Caller::Internal(_) => (2u8, [0u8; 32]),
+        };
+        state.last_route_key[0] = u8::try_from(body.len()).unwrap_or(255);
+        state.last_route_key[1] = kind;
+        let n = body.len().min(6);
+        state.last_route_key[2..2 + n].copy_from_slice(&body[..n]);
+        if body.len() > 6 {
+            let n2 = (body.len() - 6).min(24);
+            state.migration_payload[..n2].copy_from_slice(&body[6..6 + n2]);
+        } else {
+            state.migration_payload[..24].copy_from_slice(&pubkey[..24]);
+        }
+        MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
     }
 
     /// Routes a settlement, administers the table, or records a callback.

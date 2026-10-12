@@ -98,13 +98,14 @@ need() {
 # hex, $3 = init-json value. Prints the account address only when the deploy
 # completed without an error field.
 deploy_instance() {
-    local json_out="$1" salt="$2" init_json="$3" address error attempt
+    local json_out="$1" salt="$2" init_json="$3" extra="${4:-}" address error attempt
     for attempt in 1 2; do
         set +e
         stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
             --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
             --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
-            --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
+            --init-json "$init_json" $extra \
+            --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
             --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
         set -e
         error="$(jq -r '.error // empty' "$json_out" 2>/dev/null || true)"
@@ -234,10 +235,12 @@ for owner_id in package-owner developer user; do
 done
 if [ -z "$OWNER_IDENTITY" ]; then
     printf 'FAILED: no stand identity answers as the router owner\n' | tee -a "$REPORT"
-    exit 1
+    failures=$((failures + 1))
+else
+    log "owner identity: $OWNER_IDENTITY"
 fi
-log "owner identity: $OWNER_IDENTITY"
 
+if [ -n "$OWNER_IDENTITY" ]; then
 heading "deploy the beneficiary (a second router instance)"
 STEP=$((STEP + 10))
 if ! BENEFICIARY="$(deploy_instance "$WORK/bene-deploy.json" 62656e652d3031 null)"; then
@@ -299,6 +302,29 @@ STEP=$((STEP + 10))
 need avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
+fi
+
+heading "owner-id experiments (which key signs the deploy)"
+for owner_flag in package-owner "$OWNER_HEX"; do
+    STEP=$((STEP + 10))
+    if XADDR="$(deploy_instance "$WORK/x-deploy.json" 78666c672d3031 null "--owner-id $owner_flag")"; then
+        log "deploy --owner-id $owner_flag -> $XADDR"
+        ROUTER="$XADDR"
+        ARGS_JSON="null"
+        STEP=$((STEP + 10))
+        call_json "$WORK/x-version.json" settlement.router.version user 0 || true
+        log "state after --owner-id $owner_flag: $(jq -r '.state // empty' "$WORK/x-version.json" 2>/dev/null | head -c 220)"
+        ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
+        for owner_id in package-owner developer user; do
+            STEP=$((STEP + 10))
+            call_json "$WORK/x-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
+            st="$(acmo_status "$WORK/x-probe-$owner_id.json")"
+            log "probe (--owner-id $owner_flag / $owner_id): status ${st:-none}"
+        done
+    else
+        log "deploy --owner-id $owner_flag refused: $(head -c 200 "$WORK/x-deploy.json" 2>/dev/null)"
+    fi
+done
 
 heading "Result"
 if [ "$failures" -eq 0 ]; then
