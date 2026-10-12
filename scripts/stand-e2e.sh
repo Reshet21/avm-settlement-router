@@ -27,7 +27,7 @@ WORK="$(mktemp -d)"
 STATE="$WORK/developer.state"
 PROFILE="${AVM_PROFILE:-${AVM_SDK_HOME:-$HOME/.local/share/avm-sdk}/current/profiles/wasmtime-release-profile.v1}"
 ARTIFACTS="${ARTIFACTS:-$ROOT/target/avm}"
-DAPP_ID="1111111111111111111111111111111111111111111111111111111111111111"
+DAPP_ID="deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
 ROUTE_KEY_HEX="726f7574652d3031" # "route-01"
 MIN_VALUE=100
 SETTLE_VALUE=500
@@ -126,7 +126,7 @@ call_json() { # json_out method identity [value]
     local json_out="$1" method="$2" identity="$3" value="${4:-0}"
     stand "$json_out" avm-local-stand call --state "$STATE" --wasmtime-profile "$PROFILE" \
         --address "$ROUTER" --method "$method" --args-json "${ARGS_JSON:-null}" \
-        --identity "$identity" --value-main "$value" --extra-currencies '' \
+        --identity "$identity" --value-main "$value" \
         --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
         --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
 }
@@ -158,6 +158,10 @@ if [ -z "$OWNER_HEX" ]; then
     exit 1
 fi
 log "package-owner key from init.json: $OWNER_HEX"
+log "init.json: $(jq -c . "$WORK/init.json" 2>/dev/null || true)"
+set +e
+stand /dev/null avm-local-stand call --help
+set -e
 
 heading "deploy the router (owner = the deploying identity)"
 # The stand generates fresh identity keys at every init, so the router takes
