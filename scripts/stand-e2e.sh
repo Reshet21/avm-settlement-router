@@ -323,7 +323,7 @@ need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
 fi
 
 heading "ACDP probe (where the --init-json payload lives)"
-PROBE_BODY="0x$(printf '42%.0s' $(seq 1 200))"
+PROBE_BODY="\"0x$(printf '42%.0s' $(seq 1 200))\""
 STEP=$((STEP + 10))
 if PADDR="$(deploy_instance "$WORK/probe-deploy.json" 70726f622d3031 "$PROBE_BODY")"; then
     ROUTER="$PADDR"
