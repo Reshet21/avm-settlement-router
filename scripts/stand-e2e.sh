@@ -219,37 +219,40 @@ STEP=$((STEP + 10))
 call_json "$WORK/version.json" settlement.router.version user 0 || true
 log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 400)"
 
-# Owner probe: a bodyless `withdraw` answers 1608 NOTHING_TO_WITHDRAW to the
-# owner and 1603 UNAUTHORIZED to anyone else, without touching the routing
-# table (withdraw refuses a non-empty body by design).
-ARGS_JSON="null"
-for owner_id in package-owner developer user; do
+# Owner discovery = a real `route.set` with a valid route body. The stand
+# gates bodyless calls behind a local call account ("local call account is
+# absent" for the owner identity) but lets body-bearing calls through, so the
+# owner is discovered by actually installing the route (status 0).
+BENEFICIARY="$ROUTER"
+BENEDAPP="${BENEFICIARY%%:*}"
+BENEACCT="${BENEFICIARY##*:}"
+MIN_LE="$(python3 -c "print(int('$MIN_VALUE').to_bytes(16, 'little').hex())")"
+ROUTER_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}${MIN_LE}"
+ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
+for owner_id in package-owner user developer; do
     STEP=$((STEP + 10))
-    call_json "$WORK/owner-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
-    st="$(acmo_status "$WORK/owner-probe-$owner_id.json")"
-    if [ "$st" = "1608" ]; then
-        log "owner probe ($owner_id, withdraw): status 1608 NOTHING_TO_WITHDRAW -> owner"
+    call_json "$WORK/route-$owner_id.json" settlement.route.set "$owner_id" 0 || true
+    st="$(acmo_status "$WORK/route-$owner_id.json")"
+    if [ "$st" = "0" ]; then
+        log "route.set ($owner_id): status 0 Routed -> owner"
         OWNER_IDENTITY="$owner_id"
         break
     elif [ "$st" = "1603" ]; then
-        log "owner probe ($owner_id, withdraw): status 1603 UNAUTHORIZED (not the owner)"
-    elif [ -z "$st" ]; then
-        log "owner probe ($owner_id, withdraw): no ACMO status in response: $(head -c 200 "$WORK/owner-probe-$owner_id.json" 2>/dev/null)"
+        log "route.set ($owner_id): status 1603 UNAUTHORIZED (not the owner)"
     else
-        log "owner probe ($owner_id, withdraw): status $st (unexpected)"
+        log "route.set ($owner_id): status '$st' response: $(head -c 200 "$WORK/route-$owner_id.json" 2>/dev/null)"
     fi
 done
 if [ -n "$OWNER_IDENTITY" ]; then
     log "owner identity: $OWNER_IDENTITY (attempt $ATTEMPT)"
     break
 fi
-log "attempt $ATTEMPT: the owner's call account is absent; re-rolling identity keys"
+log "attempt $ATTEMPT: no identity could install the route; re-rolling"
 done
 if [ -z "$OWNER_IDENTITY" ]; then
     printf 'FAILED: no stand identity answers as the router owner\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
-
 if [ -n "$OWNER_IDENTITY" ]; then
 heading "beneficiary = the router account (the stand allows one deploy per package)"
 BENEFICIARY="$ROUTER"
@@ -261,21 +264,13 @@ BENEACCT="${BENEFICIARY##*:}"
 MIN_LE="$(python3 -c "print(int('$MIN_VALUE').to_bytes(16, 'little').hex())")"
 ROUTER_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}${MIN_LE}"
 
-heading "route.set (owner identity)"
+heading "route.set already installed by the owner-discovery step"
 HEX_STYLE="0x"
-ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-STEP=$((STEP + 10))
-if ! call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0; then
-    log 'the 0x-hex encoding was refused; trying bare hex'
-    HEX_STYLE="bare"
-    ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-    call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0 || true
-fi
-if ! call_ok "$WORK/route.json"; then
+if ! call_ok "$WORK/route-$OWNER_IDENTITY.json"; then
     printf 'FAILED: route.set did not succeed — owner identity check is not closed\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
-log "args encoding in use: $HEX_STYLE hex; route.set: $(jq -c . "$WORK/route.json" 2>/dev/null | head -c 300)"
+log "args encoding in use: $HEX_STYLE hex; route.set: $(jq -c . "$WORK/route-$OWNER_IDENTITY.json" 2>/dev/null | head -c 300)"
 
 heading "settle (user identity)"
 SETTLE_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}"
