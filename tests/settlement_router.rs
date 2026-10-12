@@ -342,7 +342,8 @@ fn init_installs_the_declared_state_image() {
 }
 
 /// The deploy body may install an explicit owner key; anything other than
-/// empty or exactly 32 bytes is refused instead of guessing.
+/// empty or at most 31 bytes is refused instead of guessing, and when an
+/// opaque-ABI envelope precedes the key the trailing 32 bytes win.
 #[test]
 fn init_installs_an_owner_key_from_the_deploy_body() {
     let custom_owner = [0x5a; 32];
@@ -357,12 +358,41 @@ fn init_installs_an_owner_key_from_the_deploy_body() {
     assert_eq!(decoded.owner_pubkey, custom_owner);
     assert_ne!(decoded.owner_pubkey, router::owner_pubkey());
 
+    // An envelope in front of the key must not disturb the tail.
+    let mut enveloped = vec![0x2a; 7];
+    enveloped.extend_from_slice(&custom_owner);
+    let message = external_message(custom_owner, destination, 0, 0, &enveloped, &[], true);
+    let bytes =
+        message_input(1, [0; 32], [0; 32], custom_owner, destination, 0, &[], &[], &message);
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    let output = SettlementRouter::init(input);
+    assert_eq!(output.status_code, 0);
+    let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
+    assert_eq!(decoded.owner_pubkey, custom_owner);
+
     // A garbled deploy body must not install half a key.
     let message = external_message(custom_owner, destination, 0, 0, &[0x5a; 31], &[], true);
     let bytes =
         message_input(1, [0; 32], [0; 32], custom_owner, destination, 0, &[], &[], &message);
     let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
     assert_eq!(SettlementRouter::init(input).status_code, status::INVALID_SETTLEMENT);
+}
+
+/// With no deploy body the deployer's external pubkey becomes the owner: the
+/// stand generates fresh identity keys at every init, so the deployer is the
+/// one owner key that cannot be guessed wrong.
+#[test]
+fn init_installs_the_deployers_key_when_the_deploy_body_is_empty() {
+    let deployer = [0x77; 32];
+    let destination = router_address();
+    let message = external_message(deployer, destination, 0, 0, &[], &[], true);
+    let bytes = message_input(1, [0; 32], [0; 32], deployer, destination, 0, &[], &[], &message);
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    let output = SettlementRouter::init(input);
+    assert_eq!(output.status_code, 0);
+    let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
+    assert_eq!(decoded.owner_pubkey, deployer);
+    assert_ne!(decoded.owner_pubkey, router::owner_pubkey());
 }
 
 #[test]

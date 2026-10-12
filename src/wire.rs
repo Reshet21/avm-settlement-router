@@ -99,12 +99,14 @@ pub const WITHDRAWN_EVENT_CLASS: u64 = 0xf322_0038_13d7_882c;
 
 /// Admin key authorized to change the routing table — the fallback owner.
 ///
-/// `init` installs this constant only when the deploy body is empty. The local
-/// stand generates fresh identity keys at every `init`, so a real stand run
-/// must install the owner explicitly: pass the desired 32-byte key as the
-/// deploy body (`--init-json`), taking it from the `identities` block the
-/// stand's `init` command reports. `scripts/stand-e2e.sh` does exactly that
-/// and proves owner authorization on the stand.
+/// `init` installs this constant only for fixtures with neither a deploy body
+/// nor an external deployer (internal callers). On the stand and in real
+/// deploys the owner comes from the deploy itself: an empty deploy body
+/// installs the deployer's pubkey (the stand generates fresh identity keys at
+/// every `init`, so the deployer is the one owner key that cannot be guessed
+/// wrong), and a 32-or-more-byte body pins the trailing 32 bytes explicitly
+/// (`--init-json "0x..."`). `scripts/stand-e2e.sh` proves owner authorization
+/// end to end either way.
 pub const OWNER_PUBKEY: [u8; 32] = [
     0x81, 0x39, 0x77, 0x0e, 0xa8, 0x7d, 0x17, 0x5f, 0x56, 0xa3, 0x54, 0x66, 0xc3, 0x4c, 0x7e, 0xcc,
     0xcb, 0x8d, 0x8a, 0x91, 0xb4, 0xee, 0x37, 0xa2, 0x5d, 0xf6, 0x0f, 0x5b, 0x8f, 0xc9, 0xb3, 0x94,

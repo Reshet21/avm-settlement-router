@@ -47,12 +47,15 @@ pub struct SettlementRouter;
 impl Contract for SettlementRouter {
     /// Installs the routing table for a freshly deployed account.
     ///
-    /// The owner key is taken from the deploy message body when it carries
-    /// exactly 32 bytes and falls back to the documented stand default
-    /// ([`router::owner_pubkey`]) when the body is empty; any other length is
-    /// rejected so a garbled deploy cannot install an unintended owner. The
-    /// ABI's status set is fixed, so malformed install arguments answer
-    /// `INVALID_SETTLEMENT`.
+    /// Owner selection, in order: the last 32 bytes of the deploy body when it
+    /// carries at least 32 bytes (the stand delivers `--init-json` as an
+    /// opaque ABI value, which may add an envelope in front of the payload);
+    /// otherwise the deploying caller's external pubkey — the stand generates
+    /// fresh identity keys at every `init`, so the deployer is the one owner
+    /// key that cannot be guessed wrong; otherwise the documented fallback
+    /// [`router::owner_pubkey`]. Any other deploy shape is rejected so a
+    /// garbled deploy cannot install an unintended owner. The ABI's status set
+    /// is fixed, so malformed install arguments answer `INVALID_SETTLEMENT`.
     ///
     /// Initialization runs once, on the deploy message, and answers with a
     /// [`StateUpdate::FullReplace`] image. The SDK forbids callback intents,
@@ -60,12 +63,15 @@ impl Contract for SettlementRouter {
     /// so this path emits state only.
     fn init(input: MessageInput<'_>) -> MessageOutput {
         let body = input.message.body();
-        let owner = if body.is_empty() {
-            router::owner_pubkey()
-        } else if body.len() == 32 {
+        let owner = if body.len() >= 32 {
             let mut key = [0u8; 32];
-            key.copy_from_slice(body);
+            key.copy_from_slice(&body[body.len() - 32..]);
             key
+        } else if body.is_empty() {
+            match input.caller {
+                Caller::External(pubkey) => pubkey,
+                Caller::Internal(_) => router::owner_pubkey(),
+            }
         } else {
             return MessageOutput::failure(status::INVALID_SETTLEMENT);
         };

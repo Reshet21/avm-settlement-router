@@ -188,12 +188,13 @@ callback double-count.
 This is a deterministic fixture, not an audited application contract. Per the
 SDK's own guidance on its examples:
 
-- The `OWNER_PUBKEY` fallback applies only to deploys with an empty init body.
-  The stand generates fresh identity keys at every `init`, so a real run
-  installs the owner key through the deploy body (32 bytes, taken from the
-  stand's `identities` output) — `scripts/stand-e2e.sh` does this and verifies
-  owner authorization on the stand. For an application, pin your own owner the
-  same way or replace the fallback.
+- The `OWNER_PUBKEY` fallback applies only to fixtures with neither a deploy
+  body nor an external deployer. The stand generates fresh identity keys at
+  every `init`, so a real run takes the owner from the deploy itself: an empty
+  deploy body (`--init-json null`) installs the deploying identity's pubkey,
+  and `--init-json "0x<32-byte hex>"` pins an explicit key — `scripts/stand-e2e.sh`
+  verifies owner authorization on the stand either way. For an application,
+  pin your own owner explicitly or replace the fallback.
 - Replace every fixed route key and amount; to change a method or event,
   rename it and let `hash_u64_le` pick the new id — never hand-pick one.
 - Read [`docs/method-ids.md`](docs/method-ids.md) — ids are name-derived

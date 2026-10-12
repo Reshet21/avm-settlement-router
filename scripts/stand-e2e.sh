@@ -10,15 +10,15 @@
 #
 # Every command and its streams are recorded in stand-e2e-report.md. The
 # scenario: init -> discover the stand's identity keys -> deploy the router
-# with the package-owner key installed as owner -> deploy a beneficiary ->
-# route.set (owner identity) -> settle (user identity) -> delivery callback
-# lands -> a second settle proves the account is not stuck -> inspect ->
-# replay roots match.
+# (owner = the deploying identity, or a key pinned in the deploy body) ->
+# deploy a beneficiary -> route.set (owner identity) -> settle (user identity)
+# -> delivery callback lands -> a second settle proves the account is not
+# stuck -> inspect -> replay roots match.
 #
-# The stand generates fresh identity keys at every `init`, so the owner key
-# must be installed from init data (the deploy body is exactly 32 bytes =
-# owner pubkey; see `init` in src/lib.rs). This script discovers the working
-# `--init-json` encoding empirically and reports it.
+# The stand generates fresh identity keys at every `init`, so the router takes
+# the owner from the deploy itself: an empty deploy body installs the
+# deployer's pubkey, and a 0x-prefixed 32-byte body pins an explicit key (see
+# `init` in src/lib.rs). The script reports which identity answers as owner.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -76,29 +76,33 @@ need() {
 
 # One deploy round trip: the first attempt reports funding_required with the
 # derived address, fund it, deploy again. $1 = json capture path, $2 = salt
-# hex, $3 = init-json value. Uses $STEP for timestamps.
+# hex, $3 = init-json value. Prints the account address only when the deploy
+# completed without an error field.
 deploy_instance() {
-    local json_out="$1" salt="$2" init_json="$3" address
-    set +e
-    stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-        --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-        --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
-        --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
-    set -e
-    address="$(jq -r '.address // empty' "$json_out" 2>/dev/null || true)"
-    if [ -z "$address" ]; then
+    local json_out="$1" salt="$2" init_json="$3" address error attempt
+    for attempt in 1 2; do
+        set +e
+        stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
+            --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
+            --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
+            --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
+            --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
+        set -e
+        address="$(jq -r '.address // empty' "$json_out" 2>/dev/null || true)"
+        error="$(jq -r '.error // empty' "$json_out" 2>/dev/null || true)"
+        if [ -z "$error" ] && [ -n "$address" ]; then
+            printf '%s' "$address"
+            return 0
+        fi
+        if [ "$error" = "funding_required" ] && [ -n "$address" ]; then
+            stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
+                --address "$address" --shells 100000 || true
+            STEP=$((STEP + 10))
+            continue
+        fi
         return 1
-    fi
-    stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
-        --address "$address" --shells 100000 >/dev/null 2>&1 || true
-    STEP=$((STEP + 10))
-    stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-        --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-        --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
-        --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 || return 1
-    printf '%s' "$address"
+    done
+    return 1
 }
 
 call_json() { # json_out method identity [value]
@@ -138,36 +142,43 @@ if [ -z "$OWNER_HEX" ]; then
 fi
 log "package-owner key from init.json: $OWNER_HEX"
 
-heading "deploy the router with the package-owner key as owner"
-# The deploy body is the 32-byte owner key; discover the --init-json encoding
-# that delivers it (hex string first, mirroring --args-json for fixed_bytes).
+heading "deploy the router (owner = the deploying identity)"
+# The stand generates fresh identity keys at every init, so the router takes
+# the owner from the deploy itself: an empty deploy body installs the
+# deployer's key, and a 0x-prefixed 32-byte body pins an explicit key (the
+# canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
-INIT_ENCODING=""
-for encoding in "\"$OWNER_HEX\"" "\"0x$OWNER_HEX\"" "[\"$OWNER_HEX\"]"; do
-    STEP=$((STEP + 10))
-    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$encoding")"; then
-        # Owner auth is the acceptance test for the encoding: route.set must
-        # not answer 1603 UNAUTHORIZED.
-        HEX_STYLE="bare"
-        ARGS_JSON="\"${ROUTE_KEY_HEX}$(printf '%064x' 0)$(printf '%064x' 0)$(printf '%032x' 0)\""
-        if call_json "$WORK/owner-probe.json" settlement.route.set package-owner 0; then
-            probe_status="$(jq -r '.status_code // .error // "unknown"' "$WORK/owner-probe.json" 2>/dev/null || echo unknown)"
-        else
-            probe_status="command-failed"
-        fi
-        log "init-json encoding $encoding -> owner probe: $probe_status"
-        if [ "$probe_status" != "1603" ] && [ "$probe_status" != "command-failed" ]; then
-            INIT_ENCODING="$encoding"
-            break
-        fi
-        ROUTER=""
+OWNER_IDENTITY=""
+INIT_ENCODING="null"
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
+    log "router address: $ROUTER (empty deploy body: owner = deployer identity)"
+else
+    INIT_ENCODING="\"0x$OWNER_HEX\""
+    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$INIT_ENCODING")"; then
+        log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
+    else
+        printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
+        exit 1
+    fi
+fi
+# Owner probe: `withdraw` answers 1702 OWNER_CURRENCY_NOT_FOUND to the owner
+# and 1603 UNAUTHORIZED to anyone else, without touching the routing table.
+HEX_STYLE="0x"
+ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
+for owner_id in package-owner developer user; do
+    call_json "$WORK/owner-probe-$owner_id.json" withdraw "$owner_id" 0 || true
+    probe_status="$(jq -r '.status_code // empty' "$WORK/owner-probe-$owner_id.json" 2>/dev/null || true)"
+    log "owner probe ($owner_id, withdraw): status ${probe_status:-command-failed}"
+    if [ "$probe_status" = "1702" ]; then
+        OWNER_IDENTITY="$owner_id"
+        break
     fi
 done
-if [ -z "$ROUTER" ] || [ -z "$INIT_ENCODING" ]; then
-    printf 'FAILED: no --init-json encoding delivered the owner key\n' | tee -a "$REPORT"
+if [ -z "$OWNER_IDENTITY" ]; then
+    printf 'FAILED: no stand identity answers as the router owner\n' | tee -a "$REPORT"
     exit 1
 fi
-log "router address: $ROUTER (owner installed via --init-json $INIT_ENCODING)"
+log "owner identity: $OWNER_IDENTITY"
 
 heading "deploy the beneficiary (a second router instance)"
 STEP=$((STEP + 10))
@@ -187,11 +198,11 @@ heading "route.set (owner identity)"
 HEX_STYLE="0x"
 ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
 STEP=$((STEP + 10))
-if ! call_json "$WORK/route.json" settlement.route.set package-owner 0; then
+if ! call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0; then
     log 'the 0x-hex encoding was refused; trying bare hex'
     HEX_STYLE="bare"
     ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-    call_json "$WORK/route.json" settlement.route.set package-owner 0 || true
+    call_json "$WORK/route.json" settlement.route.set "$OWNER_IDENTITY" 0 || true
 fi
 if jq -e '(.status_code // 0) != 0 or .error' "$WORK/route.json" >/dev/null 2>&1; then
     printf 'FAILED: route.set did not succeed — owner identity check is not closed\n' | tee -a "$REPORT"
