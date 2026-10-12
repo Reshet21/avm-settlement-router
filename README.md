@@ -205,6 +205,10 @@ SDK's own guidance on its examples:
 - `withdraw` addresses the owner inside the router's own `dapp_id`, so it
   assumes the package-owner account is the package-derived account for that
   partition. Confirm that against your deployment topology.
+- `beneficiary/` is a second, independent fixture contract that plays the
+  routed beneficiary on the local stand (the stand allows one deploy per
+  package, and the router refuses a route to its own account). It is not part
+  of the router's deliverable.
 
 ## License
 

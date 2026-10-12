@@ -235,13 +235,20 @@ parses that layout: a 32-byte payload pins the owner key, an empty payload
 falls back to the deploy signer's identity key, anything else falls back to the
 tail-32 rule.
 
-Two stand behaviours matter when scripting scenarios:
+Three stand behaviours matter when scripting scenarios:
 
 - **one deploy per package** — a second `deploy` of the same wasm is rejected
-  with `selection is already attached immutably to the package`, so the
-  scenario uses a single instance and points `route.set` at the router account
-  itself (the delivery and callback messages stay on that account);
-- **`--identity <name>` calls need a local call account** — `user` and
-  `package-owner` have one, the `developer` identity does not
-  (`local call account is absent`), which is why the owner key is pinned
-  explicitly with `--init-json` instead of relying on the deploy signer.
+  with `selection is already attached immutably to the package`, so a scenario
+  that needs two accounts (router + beneficiary) must build two packages. The
+  `beneficiary/` fixture contract is exactly that second package: it accepts
+  `settlement.beneficiary.receive`, emits `settlement.beneficiary.payout`, and
+  answers the delivery callback;
+- **bodyless calls need a local call account** — a bodyless `--args-json null`
+  call from the owner identity fails with `local call account is absent`
+  (whether the account exists is decided per generated key and cannot be
+  relied on), while body-bearing calls (`--args-json '"0x..."'`) always run.
+  The scenario therefore discovers the owner with a real `route.set`, not with
+  a bodyless probe;
+- **`--owner-id` only influences address derivation** — the deploy signer is
+  always the `developer` identity. The owner key is pinned explicitly with
+  `--init-json '"0x<64-hex>"'`.
