@@ -175,7 +175,11 @@ need test -f "$ARTIFACTS/contract.descriptor"
 need test -f "$PROFILE"
 ls -l "$ARTIFACTS" >>"$REPORT" 2>&1 || true
 
-heading "init"
+OWNER_IDENTITY=""
+ROUTER=""
+for ATTEMPT in 1 2 3 4 5; do
+heading "init (attempt $ATTEMPT)"
+rm -f "$STATE"
 stand "$WORK/init.json" avm-local-stand init --state "$STATE" --wasmtime-profile "$PROFILE" \
     --dapp-id "$DAPP_ID"
 OWNER_HEX="$(jq -r '.identities.package_owner // empty' "$WORK/init.json")"
@@ -235,11 +239,15 @@ for owner_id in package-owner developer user; do
         log "owner probe ($owner_id, withdraw): status $st (unexpected)"
     fi
 done
+if [ -n "$OWNER_IDENTITY" ]; then
+    log "owner identity: $OWNER_IDENTITY (attempt $ATTEMPT)"
+    break
+fi
+log "attempt $ATTEMPT: the owner's call account is absent; re-rolling identity keys"
+done
 if [ -z "$OWNER_IDENTITY" ]; then
     printf 'FAILED: no stand identity answers as the router owner\n' | tee -a "$REPORT"
     failures=$((failures + 1))
-else
-    log "owner identity: $OWNER_IDENTITY"
 fi
 
 if [ -n "$OWNER_IDENTITY" ]; then
