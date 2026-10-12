@@ -1,0 +1,25 @@
+[package]
+name = "avm-settlement-beneficiary"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86.0"
+license = "MIT"
+description = "Acki Nacki AVM fixture contract: the routed settlement beneficiary that answers the delivery callback"
+publish = false
+
+[lib]
+# `cdylib` is what `avm-contract-build` turns into `contract.wasm`; `rlib` is
+# what native tests link against.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+avm-contract-sdk = { path = "../vendor/avm-contract-sdk" }
+
+[profile.release]
+# Deterministic, size-conscious release build — same recipe as the router so
+# `avm-contract-build` reproducibility checks stay meaningful.
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+overflow-checks = true

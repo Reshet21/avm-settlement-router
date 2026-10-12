@@ -35,7 +35,7 @@ overflow-checks = true
 
 [workspace]
 resolver = "2"
-members = [".", "vendor/avm-contract-sdk"]
+members = [".", "beneficiary", "vendor/avm-contract-sdk"]
 
 # The vendored avm-contract-sdk manifest inherits these three keys from its
 # workspace root (`edition.workspace = true` and friends), exactly as in the

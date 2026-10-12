@@ -1,0 +1,63 @@
+# Canonical AVM contract metadata for the settlement beneficiary fixture.
+#
+# `avm-contract-build` reads this file from the contract directory, validates it
+# against the compiled WASM, and emits `contract.acab` (canonical ABI bytes) and
+# `contract.descriptor` (canonical code descriptor) next to `contract.wasm`.
+#
+# Every method id and event class is `hash_u64_le(name)` — the same name rule
+# the settlement router uses — so the delivery class `settlement.beneficiary.
+# receive` is byte-identical to the router's `SETTLEMENT_DELIVERY_METHOD_ID`.
+
+[descriptor]
+execution_mode = "message_isolated"
+state_schema_id = "bf0262026d91ebd76266b01443bf8fdfec762b6499a680d7edba54749dee9b6d"
+
+[abi]
+# One opaque fixed-size image: an 8-byte reservation the fixture never reads.
+state_root_type_id = 1
+
+# --- types -------------------------------------------------------------------
+
+[[abi.types]]
+id = 1
+kind = "fixed_bytes"
+name = "settlement_beneficiary_state"
+len = 8
+
+# The settlement delivery envelope the platform wraps around the router's
+# route_key body: route_key[8] | settle_from[8] | settle_to[8] | payload_len u32
+# | payload.
+[[abi.types]]
+id = 2
+kind = "fixed_bytes"
+name = "settlement_beneficiary_route_key"
+len = 8
+
+[[abi.types]]
+id = 3
+kind = "u128"
+name = "event_amount"
+
+# --- methods -----------------------------------------------------------------
+
+[[abi.methods]]
+name = "settlement.beneficiary.receive"
+input_type_id = 2
+
+[[abi.methods]]
+name = "settlement.beneficiary.version"
+
+# --- events ------------------------------------------------------------------
+
+[[abi.events]]
+name = "settlement.beneficiary.payout"
+
+[[abi.events.fields]]
+id = 1
+type_id = 2
+name = "route_key"
+
+[[abi.events.fields]]
+id = 2
+type_id = 3
+name = "amount"

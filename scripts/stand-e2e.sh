@@ -98,12 +98,12 @@ need() {
 # hex, $3 = init-json value. Prints the account address only when the deploy
 # completed without an error field.
 deploy_instance() {
-    local json_out="$1" salt="$2" init_json="$3" extra="${4:-}" address error attempt
+    local json_out="$1" salt="$2" init_json="$3" arts="${4:-$ARTIFACTS}" address error attempt
     for attempt in 1 2; do
         set +e
         stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-            --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-            --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
+            --wasm "$arts/contract.wasm" --acab "$arts/contract.acab" \
+            --descriptor "$arts/contract.descriptor" --salt-hex "$salt" \
             --init-json "$init_json" $extra \
             --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
             --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
@@ -172,6 +172,7 @@ heading "Preflight"
 need test -f "$ARTIFACTS/contract.wasm"
 need test -f "$ARTIFACTS/contract.acab"
 need test -f "$ARTIFACTS/contract.descriptor"
+need test -f "$ARTIFACTS/../avm-beneficiary/contract.wasm"
 need test -f "$PROFILE"
 ls -l "$ARTIFACTS" >>"$REPORT" 2>&1 || true
 
@@ -204,6 +205,13 @@ else
     printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
     exit 1
 fi
+BENE_ARTS="$ARTIFACTS/../avm-beneficiary"
+if BENEFICIARY="$(deploy_instance "$WORK/bene-deploy.json" 62656e652d3031 null "$BENE_ARTS")"; then
+    log "beneficiary address: $BENEFICIARY (settlement-beneficiary fixture, its own package)"
+else
+    printf 'FAILED: beneficiary deploy did not complete\n' | tee -a "$REPORT"
+    exit 1
+fi
 # The identity accounts pay call fees; the stand does not create all of them
 # up front ("local call account is absent"). Dump the registry and try every
 # plausible account-id derivation for the developer identity.
@@ -223,7 +231,6 @@ log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 40
 # gates bodyless calls behind a local call account ("local call account is
 # absent" for the owner identity) but lets body-bearing calls through, so the
 # owner is discovered by actually installing the route (status 0).
-BENEFICIARY="$ROUTER"
 BENEDAPP="${BENEFICIARY%%:*}"
 BENEACCT="${BENEFICIARY##*:}"
 MIN_LE="$(python3 -c "print(int('$MIN_VALUE').to_bytes(16, 'little').hex())")"
@@ -254,9 +261,8 @@ if [ -z "$OWNER_IDENTITY" ]; then
     failures=$((failures + 1))
 fi
 if [ -n "$OWNER_IDENTITY" ]; then
-heading "beneficiary = the router account (the stand allows one deploy per package)"
-BENEFICIARY="$ROUTER"
-log "beneficiary address: $BENEFICIARY (self-delivery)"
+heading "settle the route to the beneficiary fixture"
+log "beneficiary address: $BENEFICIARY"
 
 # route.set body: route_key[8] | dapp[32] | account[32] | min_value u128 le
 BENEDAPP="${BENEFICIARY%%:*}"

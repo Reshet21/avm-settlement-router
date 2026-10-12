@@ -304,14 +304,14 @@ jobs:
           set -e
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Build the contract with avm-contract-build
+      - name: Build the contracts with avm-contract-build
         run: |
           set +e
           out="$(avm-contract-build build --manifest-path Cargo.toml 2>&1)"
           status=$?
           set -e
           {
-            echo "## avm-contract-build"
+            echo "## avm-contract-build (settlement router)"
             echo '```text'
             echo '$ avm-contract-build build --manifest-path Cargo.toml'
             echo "$out"
@@ -319,7 +319,29 @@ jobs:
             echo '```'
             ls -l target/avm 2>&1
           } >> stand-e2e-report.md
-          exit $status
+          [ "$status" -eq 0 ] || exit "$status"
+          mkdir -p target/avm-router
+          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-router/ 2>/dev/null || \
+            cp beneficiary/target/avm/contract.wasm beneficiary/target/avm/contract.acab beneficiary/target/avm/contract.descriptor target/avm-router/
+          set +e
+          out="$(avm-contract-build build --manifest-path beneficiary/Cargo.toml 2>&1)"
+          status=$?
+          set -e
+          {
+            echo "## avm-contract-build (settlement beneficiary fixture)"
+            echo '```text'
+            echo '$ avm-contract-build build --manifest-path beneficiary/Cargo.toml'
+            echo "$out"
+            echo "[exit $status]"
+            echo '```'
+          } >> stand-e2e-report.md
+          [ "$status" -eq 0 ] || exit "$status"
+          mkdir -p target/avm-beneficiary
+          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-beneficiary/ 2>/dev/null || \
+            cp beneficiary/target/avm/contract.wasm beneficiary/target/avm/contract.acab beneficiary/target/avm/contract.descriptor target/avm-beneficiary/
+          # target/avm must hold the router artifacts (the scenario's default).
+          cp target/avm-router/contract.wasm target/avm-router/contract.acab target/avm-router/contract.descriptor target/avm/
+          ls -l target/avm-router target/avm-beneficiary >> stand-e2e-report.md 2>&1
 
       - name: Run the stand scenario
         run: bash scripts/stand-e2e.sh
