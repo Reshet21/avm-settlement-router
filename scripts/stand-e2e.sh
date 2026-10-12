@@ -104,7 +104,7 @@ deploy_instance() {
         stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
             --wasm "$arts/contract.wasm" --acab "$arts/contract.acab" \
             --descriptor "$arts/contract.descriptor" --salt-hex "$salt" \
-            --init-json "$init_json" $extra \
+            --init-json "$init_json" \
             --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
             --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
         set -e
