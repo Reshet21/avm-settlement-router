@@ -182,9 +182,9 @@ jobs:
             echo "## sdk canonical tests"
             cargo test -p avm-contract-sdk 2>&1 | grep -E "^(test result|running)" || true
             echo "## router integration tests (canonical ACMI frames)"
-            cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running)" || true
+            cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running|error|test .* FAILED)" -A4 || true
             echo "## router integration tests (AVM_E2E_FAILURE_FLOW=1 fixture build)"
-            AVM_E2E_FAILURE_FLOW=1 cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running)" || true
+            AVM_E2E_FAILURE_FLOW=1 cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running|error|test .* FAILED)" -A4 || true
             echo "## in-crate codec tests"
             cargo test -p avm-settlement-router --lib 2>&1 | grep -E "^(test result|running)" || true
             echo '```'
