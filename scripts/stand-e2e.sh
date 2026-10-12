@@ -206,23 +206,6 @@ fi
 stand "$WORK/inspect-early.json" avm-local-stand inspect --state "$STATE" \
     --wasmtime-profile "$PROFILE" || true
 log "inspect after deploy: $(jq -c . "$WORK/inspect-early.json" 2>/dev/null | head -c 600)"
-DEV_KEY="$(jq -r '.identities.developer // empty' "$WORK/init.json")"
-DEV_SH="$(printf '%s' "$DEV_KEY" | python3 -c "import hashlib,sys,binascii; print(binascii.hexlify(hashlib.sha256(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())" 2>/dev/null || true)"
-for dev_addr in "$DAPP_ID:$DEV_KEY" "$DAPP_ID:$DEV_SH" "$DEV_KEY"; do
-    [ -n "$dev_addr" ] || continue
-    case "$dev_addr" in *":") continue ;; esac
-    stand "$WORK/dev-fund.json" avm-local-stand fund-user --state "$STATE" \
-        --wasmtime-profile "$PROFILE" --address "$dev_addr" --shells 100000 || true
-    log "fund developer as $dev_addr: $(jq -c . "$WORK/dev-fund.json" 2>/dev/null | head -c 200)"
-done
-for id_name in package_owner user; do
-    id_key="$(jq -r ".identities.$id_name // empty" "$WORK/init.json")"
-    if [ -n "$id_key" ]; then
-        stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
-            --address "$DAPP_ID:$id_key" --shells 100000 || true
-    fi
-done
-
 # Call-path smoke test with the exact canonical shape from the SDK
 # getting-started (no args): proves the charge/exec path before we trust any
 # probe verdicts.
