@@ -100,11 +100,16 @@ deploy_instance() {
             --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
             --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
         set -e
-        address="$(jq -r '.address // empty' "$json_out" 2>/dev/null || true)"
         error="$(jq -r '.error // empty' "$json_out" 2>/dev/null || true)"
-        if [ -z "$error" ] && [ -n "$address" ]; then
-            printf '%s' "$address"
-            return 0
+        got="$(jq -r '.address // empty' "$json_out" 2>/dev/null || true)"
+        if [ -n "$got" ]; then
+            address="$got"
+        fi
+        if [ -z "$error" ]; then
+            # A success receipt carries no address; the funding_required
+            # response is where the stand reports the derived address.
+            [ -n "$address" ] && printf '%s' "$address" && return 0
+            return 1
         fi
         if [ "$error" = "funding_required" ] && [ -n "$address" ]; then
             stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
@@ -166,7 +171,7 @@ if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"
     log "router address: $ROUTER (empty deploy body: owner = deployer identity)"
 else
     INIT_ENCODING="\"0x$OWNER_HEX\""
-    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$INIT_ENCODING")"; then
+    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
         log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
     else
         printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
