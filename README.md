@@ -109,21 +109,24 @@ mode mismatch.
 
 ## Verification status
 
-Be precise about what has and has not been proven:
-
-- **Proven by design review against the SDK source**: canonical frame layouts,
-  encoder validation rules (`EffectsOnFailure`, `StateModeMismatch`,
-  `InvalidCallback`, `UpgradeRequired`/`UpgradeForbidden`, sorted event fields
-  and extra currencies, status codes ≥ 1000), and the decoder's callback body
-  rules. Two real defects were found and fixed this way; see
+- **Proven by CI** (GitHub Actions, pinned Rust 1.93.0, run `contract` on every
+  push): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` on
+  host and `wasm32-unknown-unknown`, 44 tests passing — 12 vendored SDK
+  canonical-ABI tests, 21 router integration tests over canonical `ACMI`
+  frames, 11 codec unit tests — plus a `wasm32-unknown-unknown` release build
+  (50 KiB), a guest-export check, and a build-reproducibility check. The run's
+  summary is posted to the pull request with the exact counts and the wasm
+  SHA-256.
+- **Proven by design review against the SDK source**: canonical frame layouts
+  and encoder validation rules. Real defects were found and fixed this way; see
   [Design notes](#design-notes).
-- **Not yet run**: `cargo build`, `cargo test`, `cargo clippy`, and the stand
-  E2E. The environment where this contract was written had no Rust toolchain and
-  no access to the SDK release binaries. **CI on push runs all of them**; treat
-  the first green `contract` workflow run as the point where the contract is
-  actually verified.
-- **Not yet deployed**: no stand state exists, so no receipt, address, or replay
-  root has been produced.
+- **Not yet proven**: the name-to-`method_id` resolution of the stand binaries
+  and the on-stand end-to-end journey (`deploy` / `call` / `replay`), which
+  need the `avm-local-stand` and `avm-contract-build` release binaries and a
+  Rust toolchain — neither was available in the authoring environment. See
+  [`docs/method-ids.md`](docs/method-ids.md) and
+  [`docs/using-the-stand.md`](docs/using-the-stand.md) for the exact
+  verification procedure.
 
 ## Design notes
 
