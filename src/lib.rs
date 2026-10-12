@@ -82,7 +82,18 @@ impl Contract for SettlementRouter {
         } else {
             return MessageOutput::failure(status::INVALID_SETTLEMENT);
         };
-        MessageOutput::success(StateUpdate::FullReplace(RouterState::initial(owner).to_bytes()))
+        let mut state = RouterState::initial(owner);
+        // TEMPORARY stand diagnostic: locate a 0x42 x 32 probe payload inside
+        // the ACDP deploy envelope and park its offset plus surrounding bytes.
+        let pat = [0x42u8; 32];
+        if let Some(p) = body.windows(32).position(|w| w == pat.as_slice()) {
+            state.migration_payload[0..4].copy_from_slice(&(p as u32).to_le_bytes());
+            let head = body.get(p.saturating_sub(8)..p).unwrap_or(&[]);
+            state.migration_payload[4..4 + head.len()].copy_from_slice(head);
+            let tail = body.get(p + 32..p + 40).unwrap_or(&[]);
+            state.migration_payload[12..12 + tail.len()].copy_from_slice(tail);
+        }
+        MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
     }
 
     /// Routes a settlement, administers the table, or records a callback.

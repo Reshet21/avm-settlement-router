@@ -200,10 +200,20 @@ else
     exit 1
 fi
 # The identity accounts pay call fees; the stand does not create all of them
-# up front ("local call account is absent"), and an identity account id is its
-# pubkey within the dapp (the same addressing `withdraw` uses for the owner
-# payout). Fund each identity account so owner calls can execute.
-for id_name in developer package_owner user; do
+# up front ("local call account is absent"). Dump the registry and try every
+# plausible account-id derivation for the developer identity.
+stand "$WORK/inspect-early.json" avm-local-stand inspect --state "$STATE" \
+    --wasmtime-profile "$PROFILE" || true
+log "inspect after deploy: $(jq -c . "$WORK/inspect-early.json" 2>/dev/null | head -c 600)"
+DEV_KEY="$(jq -r '.identities.developer // empty' "$WORK/init.json")"
+DEV_B3="$(printf '%s' "$DEV_KEY" | python3 -c "import blake3,sys,binascii; print(binascii.hexlify(blake3.blake3(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())")"
+DEV_SH="$(printf '%s' "$DEV_KEY" | python3 -c "import hashlib,sys,binascii; print(binascii.hexlify(hashlib.sha256(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())")"
+for dev_addr in "$DAPP_ID:$DEV_KEY" "$DAPP_ID:$DEV_B3" "$DAPP_ID:$DEV_SH" "$DEV_KEY"; do
+    stand "$WORK/dev-fund.json" avm-local-stand fund-user --state "$STATE" \
+        --wasmtime-profile "$PROFILE" --address "$dev_addr" --shells 100000 || true
+    log "fund developer as $dev_addr: $(jq -c . "$WORK/dev-fund.json" 2>/dev/null | head -c 200)"
+done
+for id_name in package_owner user; do
     id_key="$(jq -r ".identities.$id_name // empty" "$WORK/init.json")"
     if [ -n "$id_key" ]; then
         stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
@@ -309,6 +319,25 @@ STEP=$((STEP + 10))
 need avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
+fi
+
+heading "ACDP probe (where the --init-json payload lives)"
+PROBE_BODY="0x$(printf '42%.0s' $(seq 1 200))"
+STEP=$((STEP + 10))
+if PADDR="$(deploy_instance "$WORK/probe-deploy.json" 70726f622d3031 "$PROBE_BODY")"; then
+    ROUTER="$PADDR"
+    ARGS_JSON="null"
+    STEP=$((STEP + 10))
+    call_json "$WORK/probe-version.json" settlement.router.version user 0 || true
+    python3 - "$WORK/probe-version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
+import json, sys
+st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
+off = int.from_bytes(st[72:76], 'little')
+print('probe: offset', hex(off))
+print('probe: before', st[76:84].hex(), 'after', st[84:92].hex())
+PYEOF2
+else
+    log "probe deploy refused: $(head -c 200 "$WORK/probe-deploy.json" 2>/dev/null)"
 fi
 
 heading "Result"
