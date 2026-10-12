@@ -183,7 +183,7 @@ fi
 HEX_STYLE="0x"
 ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
 for owner_id in package-owner developer user; do
-    call_json "$WORK/owner-probe-$owner_id.json" withdraw "$owner_id" 0 || true
+    call_json "$WORK/owner-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
     probe_status="$(jq -r '.status_code // empty' "$WORK/owner-probe-$owner_id.json" 2>/dev/null || true)"
     log "owner probe ($owner_id, withdraw): status ${probe_status:-command-failed}"
     if [ "$probe_status" = "1702" ]; then
