@@ -1197,3 +1197,72 @@ fn a_non_full_replace_descriptor_requirement_is_refused() {
     let output = SettlementRouter::process_message(input);
     assert_eq!(output.status_code, status::INVALID_STATE);
 }
+
+/// The E2E failure-flow channels (README "E2E failure-flow conformance") are
+/// selected by the callback handler slot of an internal message. This test
+/// asserts both behaviors of the code-upgrade sentinel: a `AVM_E2E_FAILURE_FLOW=1`
+/// build answers with the deterministic malformed-output fixture, while a
+/// normal build ignores the sentinel entirely.
+#[test]
+fn failure_flow_sentinel_selects_the_malformed_output_channel() {
+    let bytes = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::ROUTE_SET_METHOD_ID,
+        0,
+        &route_set_body(ROUTE_KEY, beneficiary_address(), 100),
+        None,
+        Some(CODE_UPGRADE_METHOD_ID),
+        &seeded_state(),
+    );
+    let input = decode_message_input(&bytes).expect("frame decodes");
+    let output = SettlementRouter::process_message(input);
+    if option_env!("AVM_E2E_FAILURE_FLOW") == Some("1") {
+        // Fixture output: the state image keeps its length but its first byte
+        // is flipped, and the single event is deliberately malformed (empty
+        // name, no topics, empty field list) under the routed event class.
+        assert_eq!(output.status_code, 0);
+        let mut expected_state = seeded_state();
+        expected_state[0] ^= 0xff;
+        assert_eq!(state_of(&output), expected_state);
+        assert_eq!(output.event_intents.len(), 1);
+        let event = &output.event_intents[0];
+        assert_eq!(event.kind, EventKind::External);
+        assert_eq!(event.event_class, avm_settlement_router::wire::ROUTED_EVENT_CLASS);
+        assert!(event.event_name.is_empty());
+        assert!(event.topics.is_empty());
+        assert_eq!(event.fields_binary, [0, 0, 0, 0]);
+        return;
+    }
+    // Normal build: the sentinel is inert and the ordinary rules apply — an
+    // internal caller may not administer routes.
+    assert_eq!(output.status_code, status::UNAUTHORIZED);
+}
+
+/// The settle channel of the failure-flow fixture: with the code-upgrade
+/// handler in the callback handler slot a `AVM_E2E_FAILURE_FLOW=1` build is the
+/// deterministic receiver trap and must panic; a normal build simply rejects
+/// the internal settle as unauthorized. (The payout-handler hang channel is
+/// deliberately untested here: it never returns.)
+#[test]
+fn failure_flow_settle_sentinel_selects_the_receiver_trap() {
+    let bytes = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::SETTLE_METHOD_ID,
+        1_000,
+        &settle_body(),
+        None,
+        Some(CODE_UPGRADE_METHOD_ID),
+        &seeded_state(),
+    );
+    if option_env!("AVM_E2E_FAILURE_FLOW") == Some("1") {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let input = decode_message_input(&bytes).expect("frame decodes");
+            let _ = SettlementRouter::process_message(input);
+        }));
+        assert!(result.is_err(), "the settle trap channel must panic deterministically");
+        return;
+    }
+    let input = decode_message_input(&bytes).expect("frame decodes");
+    let output = SettlementRouter::process_message(input);
+    assert_eq!(output.status_code, status::UNAUTHORIZED);
+}

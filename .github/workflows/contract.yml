@@ -146,6 +146,19 @@ jobs:
           sha256sum target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
           sha256sum vendor/avm-contract-sdk/src/*.rs
 
+      - name: Exercise the E2E failure-flow fixture build
+        env:
+          AVM_E2E_FAILURE_FLOW: "1"
+        run: |
+          # The same suite must pass with the failure-flow channels compiled
+          # in: every documented flow behaves identically in both builds (only
+          # the sentinel channels differ, and the sentinel tests assert both
+          # sides). The guest fixture is compiled into a separate target dir so
+          # the recorded normal-build artifacts stay untouched.
+          cargo test -p avm-settlement-router --test settlement_router
+          CARGO_TARGET_DIR=target/failure-flow cargo build --release --target wasm32-unknown-unknown
+          test -f target/failure-flow/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+
       - name: Publish verification summary
         if: ${{ !cancelled() }}
         env:
@@ -169,6 +182,8 @@ jobs:
             cargo test -p avm-contract-sdk 2>&1 | grep -E "^(test result|running)" || true
             echo "## router integration tests (canonical ACMI frames)"
             cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running)" || true
+            echo "## router integration tests (AVM_E2E_FAILURE_FLOW=1 fixture build)"
+            AVM_E2E_FAILURE_FLOW=1 cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running)" || true
             echo "## in-crate codec tests"
             cargo test -p avm-settlement-router --lib 2>&1 | grep -E "^(test result|running)" || true
             echo '```'

@@ -106,19 +106,47 @@ settlement forwarding with full value transfer, unknown route, beneficiary
 mismatch, minimum value, self-payment, one-settlement-in-flight, delivered
 callbacks, bounced callbacks, callback replay rejection, withdrawal of main
 value and SHELL, authorization refusals, version probe, code upgrade with
-migration, upgrade replay refusal, corrupt-state fail-closed, and descriptor
-mode mismatch.
+migration, upgrade replay refusal, corrupt-state fail-closed, descriptor mode
+mismatch, and the E2E failure-flow sentinel channels.
+
+## E2E failure-flow conformance
+
+The contract follows the standard-contract marker protocol from
+`examples/contract-b` in [gosh-sh/avm-sdk](https://github.com/gosh-sh/avm-sdk),
+so an E2E harness can rewrite the marked payloads and drive deterministic
+failures:
+
+- `AVM_E2E_FAILURE_FLOW_FILE_*`, `AVM_E2E_FAILURE_FLOW_RUSTFMT_*`,
+  `AVM_E2E_FAILURE_FLOW_HOOK_*`, and `AVM_E2E_FAILURE_FLOW_HELPER_*` marker
+  pairs in `src/lib.rs` delimit the payloads the harness may rewrite;
+- building with `AVM_E2E_FAILURE_FLOW=1` activates the `failure_flow` helper;
+  in every other build the hook compiles to a no-op.
+
+Channels are selected by the callback handler slot of an internal message (the
+SDK's `contract-a` forwarder produces exactly such messages):
+
+| method | callback handler | `AVM_E2E_FAILURE_FLOW=1` behaviour |
+| --- | --- | --- |
+| `settlement.router.settle` | `avm.code_upgrade` | `panic!` — deterministic receiver trap |
+| `settlement.router.settle` | `settlement.owner.payout` | never returns — deterministic timeout |
+| any other method | `avm.code_upgrade` | malformed-output fixture: empty event name, topics, and fields under the `settlement.router.routed` class, first state byte flipped |
+| anything without a sentinel handler | — | identical to a normal build |
+
+CI runs the whole suite in both builds and asserts the sentinel channels side
+by side; the hang channel is never exercised in tests because it never returns.
 
 ## Verification status
 
 - **Proven by CI** (GitHub Actions, pinned Rust 1.93.0, run `contract` on every
   push): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` on
-  host and `wasm32-unknown-unknown`, 44 tests passing — 12 vendored SDK
-  canonical-ABI tests, 21 router integration tests over canonical `ACMI`
+  host and `wasm32-unknown-unknown`, 46 tests passing — 12 vendored SDK
+  canonical-ABI tests, 23 router integration tests over canonical `ACMI`
   frames, 11 codec unit tests — plus a `wasm32-unknown-unknown` release build
-  (50 KiB), a guest-export check, and a build-reproducibility check. The run's
-  summary is posted to the pull request with the exact counts and the wasm
-  SHA-256.
+  (50 KiB), a guest-export check, and a build-reproducibility check. The same
+  integration suite also passes with `AVM_E2E_FAILURE_FLOW=1` (the failure-flow
+  fixture build), which is compiled for `wasm32-unknown-unknown` as well. The
+  run's summary is posted to the pull request with the exact counts and the
+  wasm SHA-256.
 - **Proven by design review against the SDK source**: canonical frame layouts
   and encoder validation rules. Real defects were found and fixed this way; see
   [Design notes](#design-notes).

@@ -228,6 +228,31 @@ def main() -> int:
 
     check_hash_derived_ids(sources["wire"])
 
+    # --- E2E failure-flow marker protocol (see README) ---
+    # `examples/contract-b` in gosh-sh/avm-sdk defines this convention: four
+    # marker pairs delimit the payloads the E2E harness may rewrite, and the
+    # hook must keep calling the helper.
+    lib = sources["lib"]
+    for region in ("FILE", "RUSTFMT", "HOOK", "HELPER"):
+        begin = f"/* AVM_E2E_FAILURE_FLOW_{region}_BEGIN */"
+        end = f"/* AVM_E2E_FAILURE_FLOW_{region}_END */"
+        if lib.count(begin) != 1 or lib.count(end) != 1:
+            fail(f"src/lib.rs must contain exactly one {region} marker pair")
+        elif lib.index(begin) > lib.index(end):
+            fail(f"src/lib.rs {region} markers are out of order")
+    hook_payload = re.search(
+        r"AVM_E2E_FAILURE_FLOW_HOOK_BEGIN \*/(.*?) /\* AVM_E2E_FAILURE_FLOW_HOOK_END",
+        lib,
+        flags=re.S,
+    )
+    if not hook_payload or "failure_flow(&input)" not in hook_payload.group(1):
+        fail("the failure-flow hook payload must call failure_flow(&input)")
+    after_helper = lib.split("AVM_E2E_FAILURE_FLOW_HELPER_BEGIN")[-1]
+    if "fn failure_flow" not in after_helper.split("AVM_E2E_FAILURE_FLOW_HELPER_END")[0]:
+        fail("the failure-flow helper must live inside the HELPER markers")
+    if 'option_env!("AVM_E2E_FAILURE_FLOW")' not in after_helper:
+        fail("the failure-flow helper must gate on the AVM_E2E_FAILURE_FLOW build flag")
+
     report()
     return 1 if FAILURES else 0
 

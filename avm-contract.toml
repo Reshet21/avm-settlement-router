@@ -43,14 +43,48 @@ kind = "fixed_bytes"
 name = "settlement_router_route_key"
 len = 8
 
+# --- event field types -------------------------------------------------------
+#
+# Event classes are `hash_u64_le(event name)`, exactly like method ids.
+
+[[abi.types]]
+id = 5
+kind = "u64"
+name = "event_count"
+
+[[abi.types]]
+id = 6
+kind = "u128"
+name = "event_amount"
+
+[[abi.types]]
+id = 7
+kind = "address"
+name = "event_address"
+
+# `settlement.router.settled` carries the cause message hash in `origin`.
+[[abi.types]]
+id = 8
+kind = "fixed_bytes"
+name = "event_msg_hash"
+len = 32
+
+# One-byte boolean flags (`set`, `settled`): the canonical event encoding
+# carries them as single bytes.
+[[abi.types]]
+id = 9
+kind = "fixed_bytes"
+name = "event_bool_flag"
+len = 1
+
 # --- methods -----------------------------------------------------------------
 #
 # `settlement.router.completed` is the callback handler named by the router's own
 # callback request; it is delivered as an internal callback, not called
 # externally. `withdraw` and `version` take no arguments.
 #
-# The numeric method ids the contract branches on are fixed in `src/wire.rs`.
-# Read `docs/method-ids.md` before deploying.
+# Method ids are `hash_u64_le(name)` (see `docs/method-ids.md`); `src/wire.rs`
+# holds the derived constants the contract branches on.
 
 [[abi.methods]]
 name = "settlement.router.settle"
@@ -73,6 +107,104 @@ name = "settlement.router.withdraw"
 
 [[abi.methods]]
 name = "settlement.router.version"
+
+# --- events ------------------------------------------------------------------
+#
+# Field order matches the canonical encoding order in `src/router.rs`. Every
+# event class is `hash_u64_le(name)` and is re-derived by
+# `scripts/check_consistency.py` on each run.
+
+[[abi.events]]
+name = "settlement.router.routed"
+
+[[abi.events.fields]]
+id = 1
+type_id = 7
+name = "beneficiary"
+
+[[abi.events.fields]]
+id = 2
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 3
+type_id = 5
+name = "routed_count"
+
+[[abi.events.fields]]
+id = 4
+type_id = 6
+name = "value_main"
+
+[[abi.events]]
+name = "settlement.router.route_changed"
+
+[[abi.events.fields]]
+id = 1
+type_id = 5
+name = "route_count"
+
+[[abi.events.fields]]
+id = 2
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 3
+type_id = 9
+name = "set"
+
+[[abi.events]]
+name = "settlement.router.withdrawn"
+
+[[abi.events.fields]]
+id = 1
+type_id = 6
+name = "balance_main"
+
+[[abi.events.fields]]
+id = 2
+type_id = 5
+name = "extra_count"
+
+[[abi.events.fields]]
+id = 3
+type_id = 7
+name = "owner"
+
+[[abi.events]]
+name = "settlement.router.settled"
+
+[[abi.events.fields]]
+id = 1
+type_id = 5
+name = "completed_count"
+
+[[abi.events.fields]]
+id = 2
+type_id = 5
+name = "failed_count"
+
+[[abi.events.fields]]
+id = 3
+type_id = 8
+name = "origin"
+
+[[abi.events.fields]]
+id = 4
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 5
+type_id = 9
+name = "settled"
+
+[[abi.events.fields]]
+id = 6
+type_id = 5
+name = "status_code"
 
 # --- errors ------------------------------------------------------------------
 #
