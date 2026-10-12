@@ -45,28 +45,28 @@ use wire::SETTLE_METHOD_ID;
 /// The settlement router contract.
 pub struct SettlementRouter;
 
-impl Contract for SettlementRouter {
-    /// Splits the local stand's `ACDP` deploy envelope into its init payload.
-    ///
-    /// The envelope is `ACDP` magic, a fixed header whose tail records the
-    /// three artifact lengths, an 8-byte salt, the `--init-json` payload, and
-    /// the wasm / descriptor / acab blobs. Returns `None` for any body that
-    /// does not add up, so callers can treat it as a plain byte string.
-    fn acdp_init_payload(body: &[u8]) -> Option<&[u8]> {
-        if !body.starts_with(b"ACDP") {
-            return None;
-        }
-        let wasm_len = u32::from_le_bytes(body.get(272..276)?.try_into().ok()?) as usize;
-        let desc_len = u32::from_le_bytes(body.get(276..280)?.try_into().ok()?) as usize;
-        let acab_len = u64::from_le_bytes(body.get(280..288)?.try_into().ok()?) as usize;
-        let start = 296usize;
-        let end = body.len().checked_sub(wasm_len + desc_len + acab_len)?;
-        if end < start {
-            return None;
-        }
-        Some(&body[start..end])
+/// Splits the local stand's `ACDP` deploy envelope into its init payload.
+///
+/// The envelope is `ACDP` magic, a fixed header whose tail records the three
+/// artifact lengths, an 8-byte salt, the `--init-json` payload, and the
+/// wasm / descriptor / acab blobs. Returns `None` for any body that does not
+/// add up, so callers can treat it as a plain byte string.
+fn acdp_init_payload(body: &[u8]) -> Option<&[u8]> {
+    if !body.starts_with(b"ACDP") {
+        return None;
     }
+    let wasm_len = u32::from_le_bytes(body.get(272..276)?.try_into().ok()?) as usize;
+    let desc_len = u32::from_le_bytes(body.get(276..280)?.try_into().ok()?) as usize;
+    let acab_len = u64::from_le_bytes(body.get(280..288)?.try_into().ok()?) as usize;
+    let start = 296usize;
+    let end = body.len().checked_sub(wasm_len + desc_len + acab_len)?;
+    if end < start {
+        return None;
+    }
+    Some(&body[start..end])
+}
 
+impl Contract for SettlementRouter {
     /// Installs the routing table for a freshly deployed account.
     ///
     /// Owner selection, in order: an exactly 32-byte deploy body pins the
