@@ -106,3 +106,8 @@ fn receive(input: &MessageInput<'_>) -> MessageOutput {
     output.callback_result_body = Vec::from(route_key);
     output
 }
+
+// The bounded guest arena holds the live input and output allocations for one
+// entrypoint call. 64 KiB is far above this fixture's largest frame: an
+// 8-byte state image, one payout event, and the 8-byte callback answer.
+avm_contract_sdk::export_message_contract!(SettlementBeneficiary, arena_bytes = 65_536);
