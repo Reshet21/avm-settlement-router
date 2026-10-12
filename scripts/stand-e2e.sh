@@ -156,20 +156,20 @@ heading "route.set (owner identity)"
 HEX_STYLE="0x"
 ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
 STEP=50
-if call_raw settlement.router.route.set package-owner >"$WORK/route.json" 2>&1; then
+if call_raw settlement.route.set package-owner >"$WORK/route.json" 2>&1; then
     cat "$WORK/route.json" >>"$REPORT"
     if jq -e '.error' "$WORK/route.json" >/dev/null 2>&1; then
         log 'the 0x-hex encoding was refused; trying bare hex'
         HEX_STYLE="bare"
         ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-        need call_raw settlement.router.route.set package-owner >"$WORK/route.json"
+        need call_raw settlement.route.set package-owner >"$WORK/route.json"
         cat "$WORK/route.json" >>"$REPORT"
     fi
 else
     cat "$WORK/route.json" >>"$REPORT" 2>/dev/null || true
     HEX_STYLE="bare"
     ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-    need call_raw settlement.router.route.set package-owner >"$WORK/route.json"
+    need call_raw settlement.route.set package-owner >"$WORK/route.json"
     cat "$WORK/route.json" >>"$REPORT"
 fi
 if jq -e '.status_code? // 0 | select(. != 0)' "$WORK/route.json" >/dev/null 2>&1 \

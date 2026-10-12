@@ -20,6 +20,11 @@ CODE_UPGRADE_METHOD_ID = hash_u64_le("avm.code_upgrade") = 0xc2c6c51bc610249d
 the build (see `gosh-sh/avm-sdk` issue #2 — the open part of that issue is
 that the toolchain does not *print* the derived constants for you).
 
+Name shape is validated too: a method or event name is at most three
+dot-separated segments (`settlement.route.set` ✓, `settlement.router.route.set`
+✗ — the generated ACAB fails canonical validation with `InvalidName`).
+Underscores inside a segment are fine (`settlement.router.route_changed`).
+
 ## Evidence
 
 The rule is verified against the SDK's own fixtures — `hash_u64_le` of each
@@ -42,8 +47,8 @@ Every constant in `src/wire.rs` is `hash_u64_le` of its name:
 | --- | --- | --- |
 | `settlement.router.settle` | `SETTLE_METHOD_ID` | `0x82d7ea8f0e15a928` |
 | `settlement.router.completed` | `CALLBACK_METHOD_ID` | `0x7ce9d7f515c05256` |
-| `settlement.router.route.set` | `ROUTE_SET_METHOD_ID` | `0xae488411c32fcee2` |
-| `settlement.router.route.clear` | `ROUTE_CLEAR_METHOD_ID` | `0xb0a9ef6db4c2017c` |
+| `settlement.route.set` | `ROUTE_SET_METHOD_ID` | `0x59256bbbdb758a34` |
+| `settlement.route.clear` | `ROUTE_CLEAR_METHOD_ID` | `0x56366968a9175dff` |
 | `settlement.router.withdraw` | `WITHDRAW_METHOD_ID` | `0x3ad02292939eff9c` |
 | `settlement.router.version` | `VERSION_METHOD_ID` | `0x8fabf5023447277c` |
 | `settlement.beneficiary.receive` | `SETTLEMENT_DELIVERY_METHOD_ID` | `0x0ef6cc14d234ec6f` |

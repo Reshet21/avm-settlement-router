@@ -120,7 +120,7 @@ avm-local-stand call \
   --state "$AVM_STATE" \
   --wasmtime-profile "$AVM_PROFILE" \
   --address "$CONTRACT_ADDRESS" \
-  --method settlement.router.route.set \
+  --method settlement.route.set \
   --args-json "\"$BODY_HEX\"" \
   --identity package-owner \
   --value-main 0 --extra-currencies '' \

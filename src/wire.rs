@@ -31,11 +31,11 @@ pub const ROUTE_KEY_BYTES: usize = 8;
 /// beneficiary_account[32]`.
 pub const SETTLE_ARGS_BYTES: usize = ROUTE_KEY_BYTES + 64;
 
-/// `settlement.router.route.set` body: `route_key[8] | dest_dapp[32] |
+/// `settlement.route.set` body: `route_key[8] | dest_dapp[32] |
 /// dest_account[32] | min_value[16]`.
 pub const ROUTE_SET_ARGS_BYTES: usize = ROUTE_KEY_BYTES + 64 + 16;
 
-/// `settlement.router.route.clear` body: `route_key[8]`.
+/// `settlement.route.clear` body: `route_key[8]`.
 pub const ROUTE_CLEAR_ARGS_BYTES: usize = ROUTE_KEY_BYTES;
 
 /// `settlement.router.completed` callback body: `route_key[8]`.
@@ -59,13 +59,13 @@ pub const SETTLE_METHOD_ID: u64 = 0x82d7_ea8f_0e15_a928;
 /// routed settlement.
 pub const CALLBACK_METHOD_ID: u64 = 0x7ce9_d7f5_15c0_5256;
 
-/// `hash_u64_le("settlement.router.route.set")` — install or update one route
+/// `hash_u64_le("settlement.route.set")` — install or update one route
 /// (owner only).
-pub const ROUTE_SET_METHOD_ID: u64 = 0xae48_8411_c32f_cee2;
+pub const ROUTE_SET_METHOD_ID: u64 = 0x5925_6bbb_db75_8a34;
 
-/// `hash_u64_le("settlement.router.route.clear")` — remove one route (owner
+/// `hash_u64_le("settlement.route.clear")` — remove one route (owner
 /// only).
-pub const ROUTE_CLEAR_METHOD_ID: u64 = 0xb0a9_ef6d_b4c2_017c;
+pub const ROUTE_CLEAR_METHOD_ID: u64 = 0x5636_6968_a917_5dff;
 
 /// `hash_u64_le("settlement.router.withdraw")` — drain retained value to the
 /// owner.
@@ -180,7 +180,7 @@ pub fn decode_settle_args(body: &[u8]) -> Option<SettleArgs> {
     })
 }
 
-/// Decoded `settlement.router.route.set` arguments.
+/// Decoded `settlement.route.set` arguments.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RouteSetArgs {
     /// Routing table key to install or update.

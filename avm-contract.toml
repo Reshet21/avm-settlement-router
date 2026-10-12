@@ -84,7 +84,9 @@ len = 1
 # externally. `withdraw` and `version` take no arguments.
 #
 # Method ids are `hash_u64_le(name)` (see `docs/method-ids.md`); `src/wire.rs`
-# holds the derived constants the contract branches on.
+# holds the derived constants the contract branches on. Names are at most three
+# dot-separated segments — `avm-contract-build` rejects longer ones with
+# `InvalidName`, which is why the table methods are `settlement.route.*`.
 
 [[abi.methods]]
 name = "settlement.router.settle"
@@ -95,11 +97,11 @@ name = "settlement.router.completed"
 input_type_id = 4
 
 [[abi.methods]]
-name = "settlement.router.route.set"
+name = "settlement.route.set"
 input_type_id = 3
 
 [[abi.methods]]
-name = "settlement.router.route.clear"
+name = "settlement.route.clear"
 input_type_id = 4
 
 [[abi.methods]]

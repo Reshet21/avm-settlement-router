@@ -304,41 +304,6 @@ jobs:
           set -e
           echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Probe manifest name rules (temporary diagnostic)
-        run: |
-          # avm-contract-build rejected the generated ACAB with InvalidName.
-          # Probe candidate name-rule fixes one at a time and record which
-          # variant validates, so the rename can be exact instead of guessed.
-          probe() {
-            local variant="$1"
-            rm -rf /tmp/probe && mkdir -p /tmp/probe
-            tar -C "$GITHUB_WORKSPACE" --exclude=.git --exclude=target -cf - . | tar -C /tmp/probe -xf -
-            shift
-            ( cd /tmp/probe && "$@" )
-            set +e
-            local out status
-            out="$(cd /tmp/probe && avm-contract-build build --manifest-path Cargo.toml 2>&1)"
-            status=$?
-            set -e
-            {
-              echo "### probe: $variant -> exit $status"
-              echo '```text'
-              echo "$out"
-              echo '```'
-            } >> "$GITHUB_WORKSPACE/stand-e2e-report.md"
-          }
-          probe "control (current manifest)" true
-          probe "event route_changed -> route.changed" \
-            sed -i 's/name = "settlement\.router\.route_changed"/name = "settlement.router.route.changed"/' avm-contract.toml
-          probe "route.set/clear -> 3 segments" \
-            sed -i 's/name = "settlement\.router\.route\.set"/name = "settlement.route.set"/; s/name = "settlement\.router\.route\.clear"/name = "settlement.route.clear"/' avm-contract.toml
-          probe "field set -> installed" \
-            sed -i 's/name = "set"/name = "installed"/' avm-contract.toml
-          probe "underscore fix + 3 segments" \
-            sed -i 's/name = "settlement\.router\.route_changed"/name = "settlement.router.route.changed"/; s/name = "settlement\.router\.route\.set"/name = "settlement.route.set"/; s/name = "settlement\.router\.route\.clear"/name = "settlement.route.clear"/' avm-contract.toml
-          probe "all of the above" \
-            sed -i 's/name = "settlement\.router\.route_changed"/name = "settlement.router.route.changed"/; s/name = "settlement\.router\.route\.set"/name = "settlement.route.set"/; s/name = "settlement\.router\.route\.clear"/name = "settlement.route.clear"/; s/name = "set"/name = "installed"/' avm-contract.toml
-
       - name: Build the contract with avm-contract-build
         run: |
           set +e
