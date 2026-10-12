@@ -34,4 +34,14 @@ strip = true
 overflow-checks = true
 
 [workspace]
+resolver = "2"
 members = [".", "vendor/avm-contract-sdk"]
+
+# The vendored avm-contract-sdk manifest inherits these three keys from its
+# workspace root (`edition.workspace = true` and friends), exactly as in the
+# upstream gosh-sh/avm-sdk workspace. Keep them defined or the workspace will
+# not load.
+[workspace.package]
+edition = "2021"
+rust-version = "1.86.0"
+license-file = "LICENSE.md"
