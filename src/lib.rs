@@ -87,16 +87,16 @@ impl Contract for SettlementRouter {
             Caller::External(pk) => (1u8, pk),
             Caller::Internal(_) => (2u8, [0u8; 32]),
         };
-        state.last_route_key[0] = u8::try_from(body.len()).unwrap_or(255);
-        state.last_route_key[1] = kind;
-        let n = body.len().min(6);
-        state.last_route_key[2..2 + n].copy_from_slice(&body[..n]);
-        if body.len() > 6 {
-            let n2 = (body.len() - 6).min(24);
-            state.migration_payload[..n2].copy_from_slice(&body[6..6 + n2]);
-        } else {
-            state.migration_payload[..24].copy_from_slice(&pubkey[..24]);
-        }
+        let key_at = body.windows(32).position(|w| w == owner.as_slice());
+        state.last_route_key[0..8].copy_from_slice(&body.get(8..16).unwrap_or(&[0; 8])[..8]);
+        state.migration_payload[0..4].copy_from_slice(&(body.len() as u32).to_le_bytes());
+        state.migration_payload[4..8]
+            .copy_from_slice(&key_at.map(|p| p as u32).unwrap_or(u32::MAX).to_le_bytes());
+        state.migration_payload[8..12].copy_from_slice(&[kind, pubkey[0], pubkey[1], pubkey[2]]);
+        state.migration_payload[12..16]
+            .copy_from_slice(&body.get(40..44).unwrap_or(&[0; 4])[..4]);
+        state.migration_payload[16..24]
+            .copy_from_slice(&body.get(48..56).unwrap_or(&[0; 8])[..8]);
         MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
     }
 

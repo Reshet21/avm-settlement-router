@@ -193,16 +193,20 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-INIT_ENCODING="\"0x$OWNER_HEX\""
-if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
-    log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null "--owner-id $OWNER_HEX")"; then
+    log "router address: $ROUTER (deploy signed by the package-owner key via --owner-id)"
 else
     INIT_ENCODING="null"
     if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
-        log "router address: $ROUTER (empty deploy body: owner = the deploy caller's key)"
+        log "router address: $ROUTER (plain deploy: owner = the deploy caller's key)"
     else
-        printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
-        exit 1
+        INIT_ENCODING="\"0x$OWNER_HEX\""
+        if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
+            log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
+        else
+            printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
+            exit 1
+        fi
     fi
 fi
 # Call-path smoke test with the exact canonical shape from the SDK
@@ -213,6 +217,18 @@ ARGS_JSON="null"
 STEP=$((STEP + 10))
 call_json "$WORK/version.json" settlement.router.version user 0 || true
 log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 400)"
+python3 - "$WORK/version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
+import json, sys
+try:
+    st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
+except Exception as e:
+    print('diag decode failed:', e)
+    raise SystemExit(0)
+blen = int.from_bytes(st[72:76], 'little')
+koff = int.from_bytes(st[76:80], 'little')
+print('diag: body_len', blen, 'key_offset', hex(koff), 'kind', st[80], 'pubkey_head', st[81:84].hex())
+print('diag: body[8..16]', st[64:72].hex(), 'body[40..44]', st[84:88].hex(), 'body[48..56]', st[88:96].hex())
+PYEOF2
 
 # Owner probe: `withdraw` answers 1702 OWNER_CURRENCY_NOT_FOUND to the owner
 # and 1603 UNAUTHORIZED to anyone else, without touching the routing table.
@@ -303,28 +319,6 @@ need avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
 fi
-
-heading "owner-id experiments (which key signs the deploy)"
-for owner_flag in package-owner "$OWNER_HEX"; do
-    STEP=$((STEP + 10))
-    if XADDR="$(deploy_instance "$WORK/x-deploy.json" 78666c672d3031 null "--owner-id $owner_flag")"; then
-        log "deploy --owner-id $owner_flag -> $XADDR"
-        ROUTER="$XADDR"
-        ARGS_JSON="null"
-        STEP=$((STEP + 10))
-        call_json "$WORK/x-version.json" settlement.router.version user 0 || true
-        log "state after --owner-id $owner_flag: $(jq -r '.state // empty' "$WORK/x-version.json" 2>/dev/null | head -c 220)"
-        ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
-        for owner_id in package-owner developer user; do
-            STEP=$((STEP + 10))
-            call_json "$WORK/x-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
-            st="$(acmo_status "$WORK/x-probe-$owner_id.json")"
-            log "probe (--owner-id $owner_flag / $owner_id): status ${st:-none}"
-        done
-    else
-        log "deploy --owner-id $owner_flag refused: $(head -c 200 "$WORK/x-deploy.json" 2>/dev/null)"
-    fi
-done
 
 heading "Result"
 if [ "$failures" -eq 0 ]; then
