@@ -206,9 +206,10 @@ stand "$WORK/inspect-early.json" avm-local-stand inspect --state "$STATE" \
     --wasmtime-profile "$PROFILE" || true
 log "inspect after deploy: $(jq -c . "$WORK/inspect-early.json" 2>/dev/null | head -c 600)"
 DEV_KEY="$(jq -r '.identities.developer // empty' "$WORK/init.json")"
-DEV_B3="$(printf '%s' "$DEV_KEY" | python3 -c "import blake3,sys,binascii; print(binascii.hexlify(blake3.blake3(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())")"
-DEV_SH="$(printf '%s' "$DEV_KEY" | python3 -c "import hashlib,sys,binascii; print(binascii.hexlify(hashlib.sha256(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())")"
-for dev_addr in "$DAPP_ID:$DEV_KEY" "$DAPP_ID:$DEV_B3" "$DAPP_ID:$DEV_SH" "$DEV_KEY"; do
+DEV_SH="$(printf '%s' "$DEV_KEY" | python3 -c "import hashlib,sys,binascii; print(binascii.hexlify(hashlib.sha256(binascii.unhexlify(sys.stdin.read().strip())).digest()).decode())" 2>/dev/null || true)"
+for dev_addr in "$DAPP_ID:$DEV_KEY" "$DAPP_ID:$DEV_SH" "$DEV_KEY"; do
+    [ -n "$dev_addr" ] || continue
+    case "$dev_addr" in *":") continue ;; esac
     stand "$WORK/dev-fund.json" avm-local-stand fund-user --state "$STATE" \
         --wasmtime-profile "$PROFILE" --address "$dev_addr" --shells 100000 || true
     log "fund developer as $dev_addr: $(jq -c . "$WORK/dev-fund.json" 2>/dev/null | head -c 200)"
