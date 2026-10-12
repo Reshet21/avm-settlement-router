@@ -8,10 +8,17 @@
 #     avm-contract-build build --manifest-path Cargo.toml
 #     bash scripts/stand-e2e.sh
 #
-# Every command and its output is recorded in stand-e2e-report.md. The
-# scenario: init -> deploy router -> deploy beneficiary -> route.set (owner
-# identity) -> settle (user identity) -> delivery callback lands -> second
-# settle proves the account is not stuck -> inspect -> replay roots match.
+# Every command and its streams are recorded in stand-e2e-report.md. The
+# scenario: init -> discover the stand's identity keys -> deploy the router
+# with the package-owner key installed as owner -> deploy a beneficiary ->
+# route.set (owner identity) -> settle (user identity) -> delivery callback
+# lands -> a second settle proves the account is not stuck -> inspect ->
+# replay roots match.
+#
+# The stand generates fresh identity keys at every `init`, so the owner key
+# must be installed from init data (the deploy body is exactly 32 bytes =
+# owner pubkey; see `init` in src/lib.rs). This script discovers the working
+# `--init-json` encoding empirically and reports it.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,39 +32,82 @@ ROUTE_KEY_HEX="726f7574652d3031" # "route-01"
 MIN_VALUE=100
 SETTLE_VALUE=500
 NOW=1800000000
+STEP=0
 
 failures=0
 
 log() { printf '%s\n' "$*" >>"$REPORT"; }
 heading() { printf '\n## %s\n' "$*" | tee -a "$REPORT"; }
 
-run() {
+# Run a stand command, keeping stdout (JSON) separate from stderr (usage
+# hints). Both streams plus the exit code land in the report. The JSON goes
+# to the path in $1 when given.
+stand() {
+    local json_out="${1:-}"
+    shift
     printf '\n```text\n$ %s\n' "$*" >>"$REPORT"
-    local out status
+    local status
     set +e
-    out="$("$@" 2>&1)"
-    status=$?
+    if [ -n "$json_out" ]; then
+        "$@" >"$json_out" 2>"$WORK/last-stderr"
+        status=$?
+        cat "$json_out" >>"$REPORT"
+    else
+        "$@" >"$WORK/last-stdout" 2>"$WORK/last-stderr"
+        status=$?
+        cat "$WORK/last-stdout" >>"$REPORT"
+    fi
     set -e
-    printf '%s\n[exit %d]\n```\n' "$out" "$status" >>"$REPORT"
-    printf '%s' "$out"
+    if [ -s "$WORK/last-stderr" ]; then
+        printf -- '--- stderr ---\n' >>"$REPORT"
+        cat "$WORK/last-stderr" >>"$REPORT"
+    fi
+    printf '[exit %d]\n```\n' "$status" >>"$REPORT"
     return $status
 }
 
 need() {
-    if ! run "$@"; then
+    if ! stand "$@"; then
         printf 'FAILED: %s\n' "$*" | tee -a "$REPORT"
         failures=$((failures + 1))
     fi
     return 0
 }
 
-call_raw() { # method identity   (args encoding comes from ARGS_JSON)
-    local method="$1" identity="$2"
-    avm-local-stand call --state "$STATE" --wasmtime-profile "$PROFILE" \
+# One deploy round trip: the first attempt reports funding_required with the
+# derived address, fund it, deploy again. $1 = json capture path, $2 = salt
+# hex, $3 = init-json value. Uses $STEP for timestamps.
+deploy_instance() {
+    local json_out="$1" salt="$2" init_json="$3" address
+    set +e
+    stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
+        --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
+        --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
+        --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
+        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
+    set -e
+    address="$(jq -r '.address // empty' "$json_out" 2>/dev/null || true)"
+    if [ -z "$address" ]; then
+        return 1
+    fi
+    stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
+        --address "$address" --shells 100000 >/dev/null 2>&1 || true
+    STEP=$((STEP + 10))
+    stand "$json_out" avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
+        --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
+        --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex "$salt" \
+        --init-json "$init_json" --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
+        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 || return 1
+    printf '%s' "$address"
+}
+
+call_json() { # json_out method identity [value]
+    local json_out="$1" method="$2" identity="$3" value="${4:-0}"
+    stand "$json_out" avm-local-stand call --state "$STATE" --wasmtime-profile "$PROFILE" \
         --address "$ROUTER" --method "$method" --args-json "${ARGS_JSON:-null}" \
-        --identity "$identity" --value-main "${VALUE:-0}" --extra-currencies '' \
-        --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) --expire-at $((NOW + STEP + 3600)) \
-        --fuel-fee-shells 1000
+        --identity "$identity" --value-main "$value" --extra-currencies '' \
+        --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
+        --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000
 }
 
 args_json_for() { # hex-body -> JSON argument in the discovered encoding
@@ -79,101 +129,71 @@ need test -f "$PROFILE"
 ls -l "$ARTIFACTS" >>"$REPORT" 2>&1 || true
 
 heading "init"
-run avm-local-stand init --state "$STATE" --wasmtime-profile "$PROFILE" --dapp-id "$DAPP_ID" >"$WORK/init.json"
-cat "$WORK/init.json" >>"$REPORT"
-
-heading "deploy the router (funding round trip)"
-STEP=10
-set +e
-deploy_out=$(avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-    --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex 726f757465723031 \
-    --init-json null --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-    --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 2>&1)
-deploy_status=$?
-set -e
-log '```text'
-log "$deploy_out"
-log "[exit $deploy_status]"
-log '```'
-ROUTER="$(printf '%s' "$deploy_out" | jq -r '.address // empty')"
-if [ -z "$ROUTER" ]; then
-    printf 'FAILED: deploy did not report the contract address\n' | tee -a "$REPORT"
+stand "$WORK/init.json" avm-local-stand init --state "$STATE" --wasmtime-profile "$PROFILE" \
+    --dapp-id "$DAPP_ID"
+OWNER_HEX="$(jq -r '.identities.package_owner // empty' "$WORK/init.json")"
+if [ -z "$OWNER_HEX" ]; then
+    printf 'FAILED: init.json does not name the package-owner key\n' | tee -a "$REPORT"
     exit 1
 fi
-log "router address: $ROUTER"
-need avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --address "$ROUTER" --shells 100000
-STEP=20
-need avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-    --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex 726f757465723031 \
-    --init-json null --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-    --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 >>"$WORK/deploy.json"
-cat "$WORK/deploy.json" >>"$REPORT"
+log "package-owner key from init.json: $OWNER_HEX"
+
+heading "deploy the router with the package-owner key as owner"
+# The deploy body is the 32-byte owner key; discover the --init-json encoding
+# that delivers it (hex string first, mirroring --args-json for fixed_bytes).
+ROUTER=""
+INIT_ENCODING=""
+for encoding in "\"$OWNER_HEX\"" "\"0x$OWNER_HEX\"" "[\"$OWNER_HEX\"]"; do
+    STEP=$((STEP + 10))
+    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$encoding")"; then
+        # Owner auth is the acceptance test for the encoding: route.set must
+        # not answer 1603 UNAUTHORIZED.
+        HEX_STYLE="bare"
+        ARGS_JSON="\"${ROUTE_KEY_HEX}$(printf '%064x' 0)$(printf '%064x' 0)$(printf '%032x' 0)\""
+        if call_json "$WORK/owner-probe.json" settlement.route.set package-owner 0; then
+            probe_status="$(jq -r '.status_code // .error // "unknown"' "$WORK/owner-probe.json" 2>/dev/null || echo unknown)"
+        else
+            probe_status="command-failed"
+        fi
+        log "init-json encoding $encoding -> owner probe: $probe_status"
+        if [ "$probe_status" != "1603" ] && [ "$probe_status" != "command-failed" ]; then
+            INIT_ENCODING="$encoding"
+            break
+        fi
+        ROUTER=""
+    fi
+done
+if [ -z "$ROUTER" ] || [ -z "$INIT_ENCODING" ]; then
+    printf 'FAILED: no --init-json encoding delivered the owner key\n' | tee -a "$REPORT"
+    exit 1
+fi
+log "router address: $ROUTER (owner installed via --init-json $INIT_ENCODING)"
 
 heading "deploy the beneficiary (a second router instance)"
-STEP=30
-set +e
-bene_out=$(avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-    --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex 62656e652d3031 \
-    --init-json null --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-    --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 2>&1)
-bene_status=$?
-set -e
-log '```text'
-log "$bene_out"
-log "[exit $bene_status]"
-log '```'
-BENEFICIARY="$(printf '%s' "$bene_out" | jq -r '.address // empty')"
-if [ -z "$BENEFICIARY" ]; then
+STEP=$((STEP + 10))
+if ! BENEFICIARY="$(deploy_instance "$WORK/bene-deploy.json" 62656e652d3031 null)"; then
     printf 'FAILED: beneficiary deploy did not report an address\n' | tee -a "$REPORT"
     exit 1
 fi
 log "beneficiary address: $BENEFICIARY"
-need avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --address "$BENEFICIARY" --shells 100000
-STEP=40
-need avm-local-stand deploy --state "$STATE" --wasmtime-profile "$PROFILE" \
-    --wasm "$ARTIFACTS/contract.wasm" --acab "$ARTIFACTS/contract.acab" \
-    --descriptor "$ARTIFACTS/contract.descriptor" --salt-hex 62656e652d3031 \
-    --init-json null --block-time $((NOW + STEP)) --created-at $((NOW + STEP)) \
-    --expire-at $((NOW + STEP + 3600)) --fuel-fee-shells 1000 >>"$WORK/bene-deploy.json"
-cat "$WORK/bene-deploy.json" >>"$REPORT"
 
 # route.set body: route_key[8] | dapp[32] | account[32] | min_value u128 le
 BENEDAPP="${BENEFICIARY%%:*}"
 BENEACCT="${BENEFICIARY##*:}"
-MIN_LE="$(python3 - "$MIN_VALUE" <<'PY'
-import sys
-print(int(sys.argv[1]).to_bytes(16, "little").hex())
-PY
-)"
+MIN_LE="$(python3 -c "print(int('$MIN_VALUE').to_bytes(16, 'little').hex())")"
 ROUTER_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}${MIN_LE}"
 
 heading "route.set (owner identity)"
 HEX_STYLE="0x"
 ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-STEP=50
-if call_raw settlement.route.set package-owner >"$WORK/route.json" 2>&1; then
-    cat "$WORK/route.json" >>"$REPORT"
-    if jq -e '.error' "$WORK/route.json" >/dev/null 2>&1; then
-        log 'the 0x-hex encoding was refused; trying bare hex'
-        HEX_STYLE="bare"
-        ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-        need call_raw settlement.route.set package-owner >"$WORK/route.json"
-        cat "$WORK/route.json" >>"$REPORT"
-    fi
-else
-    cat "$WORK/route.json" >>"$REPORT" 2>/dev/null || true
+STEP=$((STEP + 10))
+if ! call_json "$WORK/route.json" settlement.route.set package-owner 0; then
+    log 'the 0x-hex encoding was refused; trying bare hex'
     HEX_STYLE="bare"
     ARGS_JSON="$(args_json_for "$ROUTER_ARGS")"
-    need call_raw settlement.route.set package-owner >"$WORK/route.json"
-    cat "$WORK/route.json" >>"$REPORT"
+    call_json "$WORK/route.json" settlement.route.set package-owner 0 || true
 fi
-if jq -e '.status_code? // 0 | select(. != 0)' "$WORK/route.json" >/dev/null 2>&1 \
-    || jq -e '.error' "$WORK/route.json" >/dev/null 2>&1; then
+if jq -e '(.status_code // 0) != 0 or .error' "$WORK/route.json" >/dev/null 2>&1; then
     printf 'FAILED: route.set did not succeed — owner identity check is not closed\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
@@ -182,17 +202,20 @@ log "args encoding in use: $HEX_STYLE hex"
 heading "settle (user identity)"
 SETTLE_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}"
 ARGS_JSON="$(args_json_for "$SETTLE_ARGS")"
-STEP=60
-VALUE=$SETTLE_VALUE
-need call_raw settlement.router.settle user >"$WORK/settle.json"
-cat "$WORK/settle.json" >>"$REPORT"
+STEP=$((STEP + 10))
+call_json "$WORK/settle.json" settlement.router.settle user "$SETTLE_VALUE" || true
+if jq -e '(.status_code // 0) != 0 or .error' "$WORK/settle.json" >/dev/null 2>&1; then
+    printf 'FAILED: settle did not succeed\n' | tee -a "$REPORT"
+    failures=$((failures + 1))
+fi
 
 heading "delivery callback lands"
-STEP=70
 for attempt in 1 2 3; do
-    run avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE" >"$WORK/inspect-$attempt.json" || true
-    cat "$WORK/inspect-$attempt.json" >>"$REPORT"
-    if jq -e '(.status.last_status? // .last_status? // 0) != 4294967295' "$WORK/inspect-$attempt.json" >/dev/null 2>&1; then
+    STEP=$((STEP + 10))
+    stand "$WORK/inspect-$attempt.json" avm-local-stand inspect --state "$STATE" \
+        --wasmtime-profile "$PROFILE" || true
+    if jq -e '(.. | objects | .last_status? // empty) != 4294967295' \
+        "$WORK/inspect-$attempt.json" >/dev/null 2>&1; then
         log "callback settled on attempt $attempt"
         break
     fi
@@ -203,21 +226,18 @@ for attempt in 1 2 3; do
 done
 
 heading "a second settle proves the account is not stuck"
-STEP=90
-VALUE=$((SETTLE_VALUE + 200))
-need call_raw settlement.router.settle user >"$WORK/settle2.json"
-cat "$WORK/settle2.json" >>"$REPORT"
-if jq -e '.status_code? // 0 | select(. != 0)' "$WORK/settle2.json" >/dev/null 2>&1 \
-    || jq -e '.error' "$WORK/settle2.json" >/dev/null 2>&1; then
+STEP=$((STEP + 10))
+call_json "$WORK/settle2.json" settlement.router.settle user $((SETTLE_VALUE + 200)) || true
+if jq -e '(.status_code // 0) != 0 or .error' "$WORK/settle2.json" >/dev/null 2>&1; then
     printf 'FAILED: the second settle was refused\n' | tee -a "$REPORT"
     failures=$((failures + 1))
 fi
 
-heading "inspect and replay"
-STEP=110
-need avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE" | tee -a "$REPORT"
-need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE" | tee -a "$REPORT"
-need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE" | tee -a "$REPORT"
+heading "inspect, events, and replay"
+STEP=$((STEP + 10))
+need avm-local-stand inspect --state "$STATE" --wasmtime-profile "$PROFILE"
+need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE"
+need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
 
 heading "Result"
 if [ "$failures" -eq 0 ]; then

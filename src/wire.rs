@@ -99,16 +99,12 @@ pub const WITHDRAWN_EVENT_CLASS: u64 = 0xf322_0038_13d7_882c;
 
 /// Admin key authorized to change the routing table — the fallback owner.
 ///
-/// The value is the stand's `package-owner` identity public key, the only
-/// stand identity key that is publicly known and exercised by a release-gated
-/// fixture (`examples/contract-a-v1` uses it as `PACKAGE_OWNER_PUBKEY` for its
-/// code-upgrade path). Owner methods therefore run on the stand with
-/// `--identity package-owner`.
-///
-/// `init` may override it: a deploy whose message body is exactly 32 bytes
-/// installs those bytes as the owner key instead of this constant. The stand's
-/// `init` command reports the generated identity public keys, so a deployment
-/// can pin the owner explicitly and does not depend on this fallback.
+/// `init` installs this constant only when the deploy body is empty. The local
+/// stand generates fresh identity keys at every `init`, so a real stand run
+/// must install the owner explicitly: pass the desired 32-byte key as the
+/// deploy body (`--init-json`), taking it from the `identities` block the
+/// stand's `init` command reports. `scripts/stand-e2e.sh` does exactly that
+/// and proves owner authorization on the stand.
 pub const OWNER_PUBKEY: [u8; 32] = [
     0x81, 0x39, 0x77, 0x0e, 0xa8, 0x7d, 0x17, 0x5f, 0x56, 0xa3, 0x54, 0x66, 0xc3, 0x4c, 0x7e, 0xcc,
     0xcb, 0x8d, 0x8a, 0x91, 0xb4, 0xee, 0x37, 0xa2, 0x5d, 0xf6, 0x0f, 0x5b, 0x8f, 0xc9, 0xb3, 0x94,

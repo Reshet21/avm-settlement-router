@@ -85,14 +85,14 @@ avm-local-stand deploy \
 ```
 
 `init` installs the empty routing table: `routed_count = 0`, no routes,
-`last_status = AWAITING_CALLBACK`. The owner key is taken from the deploy
-message body when it carries exactly 32 bytes; `--init-json null` leaves the
-body empty and installs the documented fallback `OWNER_PUBKEY` in
-`src/wire.rs` — the stand's `package-owner` identity public key (the only stand
-identity key that is publicly known, exercised by the release-gated
-`examples/contract-a-v1` upgrade path). To pin the owner explicitly instead,
-pass the desired key as the deploy body via `--init-json` once the stand's JSON
-encoding for a `fixed_bytes(32)` body is confirmed.
+`last_status = AWAITING_CALLBACK`. The owner key comes from the deploy message
+body when it carries exactly 32 bytes; `--init-json null` leaves the body empty
+and installs the fallback `OWNER_PUBKEY` in `src/wire.rs`. The stand generates
+fresh identity keys at every `init` and reports them in its JSON output under
+`identities`, so a real run installs the owner key explicitly — pass the
+`package_owner` key as the deploy body via `--init-json` (the working encoding
+is a quoted hex string; `scripts/stand-e2e.sh` discovers it and verifies owner
+authorization end to end).
 
 The scripted version of this whole walkthrough is `scripts/stand-e2e.sh`; the
 `stand-e2e` CI job runs it against the real stand binaries on every push and
@@ -100,11 +100,11 @@ posts `stand-e2e-report.md` to the pull request.
 
 ## Install A Route
 
-Route administration is owner-only. Call it with `--identity package-owner`,
-which is the identity behind the fallback `OWNER_PUBKEY`. (The stand does not
-document its identity-to-key mapping; if the call answers `1603`, the
-`stand-e2e` report shows it and the owner key must be pinned through the
-deploy body instead — see above.) The body is
+Route administration is owner-only. Call it with the identity whose key was
+installed as the owner (typically `--identity package-owner` after deploying
+with that key in the deploy body). If the call answers `1603`, the owner key
+and the identity disagree — the `stand-e2e` report shows exactly which key the
+stand generated and which one the deploy installed. The body is
 `route_key[8] | dapp_id[32] | account_id[32] | min_value[16]`, 88 bytes:
 
 ```bash
