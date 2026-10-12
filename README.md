@@ -130,10 +130,11 @@ Be precise about what has and has not been proven:
 Two decisions came from constraints that are easy to get wrong:
 
 **Callback bodies are constrained by the canonical decoder.** A callback with a
-non-zero status must carry an *empty* body, and a zero-status callback must carry
-a non-zero `fuel_fee_shells` reserve. So the two outcome classes cannot both
-report a route key in the body. The router takes the route key from retained
-state on success and from the body on a bounce.
+non-zero status must carry an *empty* body — the decoder rejects any other
+shape. A route key therefore cannot be reported back in the body of a bounced
+delivery. Both outcome classes are required to have an empty body, and the
+route key is taken from retained state, where `last_route_key` names the one
+settlement the callback may complete.
 
 **One settlement in flight.** `last_status` uses `AWAITING_CALLBACK = u32::MAX`
 as a sentinel rather than `0`. AVM status codes are `0` or `≥ 1000`, so the

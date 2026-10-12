@@ -73,6 +73,7 @@ use crate::wire::WITHDRAW_METHOD_ID;
 pub fn dispatch(input: &MessageInput<'_>) -> MessageOutput {
     match input.message.method_id() {
         CODE_UPGRADE_METHOD_ID => code_upgrade(input),
+        CALLBACK_METHOD_ID => completed(input),
         SETTLE_METHOD_ID => settle(input),
         ROUTE_SET_METHOD_ID => route_change(input, true),
         ROUTE_CLEAR_METHOD_ID => route_change(input, false),
@@ -332,28 +333,15 @@ pub fn completed(input: &MessageInput<'_>) -> MessageOutput {
     if state.routed_count == 0 || state.last_status != AWAITING_CALLBACK {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
-    // The canonical decoder forbids a non-empty body on a callback with a
-    // non-zero status and requires a non-zero reserve for a zero-status
-    // callback, so the two outcome classes carry different bodies:
-    //
-    // - delivered (`status_code == 0`) — empty body, the route key comes from
-    //   retained state;
-    // - bounced (`status_code != 0`) — the route key is reported back and must
-    //   match the pending settlement.
-    let route_key = if callback.status_code == 0 {
-        if !message.body.is_empty() {
-            return MessageOutput::failure(status::INVALID_CALLBACK);
-        }
-        state.last_route_key
-    } else {
-        let Some(route_key) = decode_route_key(message.body) else {
-            return MessageOutput::failure(status::INVALID_CALLBACK);
-        };
-        if route_key != state.last_route_key {
-            return MessageOutput::failure(status::INVALID_CALLBACK);
-        }
-        route_key
-    };
+    // The canonical decoder rejects a non-zero-status callback with any body,
+    // so a bounce cannot report its route key in one. Both outcome classes are
+    // therefore required to carry an empty body, and the route key is taken
+    // from retained state: `last_route_key` identifies the single settlement
+    // this callback may complete, guarded by the one-in-flight sentinel.
+    if !message.body.is_empty() {
+        return MessageOutput::failure(status::INVALID_CALLBACK);
+    }
+    let route_key = state.last_route_key;
     if callback.status_code == 0 {
         let Some(next) = state.completed_count.checked_add(1) else {
             return MessageOutput::failure(status::INVALID_STATE);

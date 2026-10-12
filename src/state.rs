@@ -308,7 +308,7 @@ mod tests {
         }
         let bytes = state.to_bytes();
         assert_eq!(bytes.len(), STATE_BYTES);
-        assert_eq!(RouterState::from_bytes(&bytes), Some(state));
+        assert_eq!(RouterState::from_bytes(&bytes), Some(state.clone()));
         assert_eq!(state.find_route([3; 8]), Some(&route(3)));
     }
 

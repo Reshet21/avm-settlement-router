@@ -394,7 +394,7 @@ fn settle_rejects_an_unknown_route_and_a_beneficiary_mismatch() {
         STRANGER_PUBKEY,
         avm_settlement_router::wire::SETTLE_METHOD_ID,
         500,
-        &[*b"nope-001", &BENEFICIARY_ACCOUNT[..], &DAPP_ID[..]].concat(),
+        &[&b"nope-001"[..], &BENEFICIARY_ACCOUNT[..], &DAPP_ID[..]].concat(),
         0,
         &[],
         &[],
@@ -572,13 +572,14 @@ fn callback_records_a_bounced_settlement_and_blocks_a_replay() {
     );
     let pending = state_of(&run(&routed));
 
-    // A bounced settlement carries a non-zero status and must report the route
-    // key of the pending settlement back in its body.
+    // A bounced settlement carries a non-zero status. The canonical decoder
+    // requires its body to be empty, so the route key is attributed from
+    // retained state, not from the callback body.
     let bounced = internal_input(
         beneficiary_address(),
         avm_settlement_router::wire::CALLBACK_METHOD_ID,
         0,
-        &ROUTE_KEY,
+        &[],
         Some(([0xcd; 32], 1600)),
         None,
         &pending,
@@ -589,41 +590,36 @@ fn callback_records_a_bounced_settlement_and_blocks_a_replay() {
     assert_eq!(recorded.completed_count, 0);
     assert_eq!(recorded.failed_count, 1);
     assert_eq!(recorded.last_status, 1600);
+    assert_eq!(recorded.last_route_key, ROUTE_KEY);
+    assert_eq!(output.event_intents[0].topics, vec![ROUTE_KEY.to_vec()]);
 
+    // The sentinel is cleared, so the same bounce cannot run twice.
     let replay = internal_input(
-        beneficiary_address(),
-        avm_settlement_router::wire::CALLBACK_METHOD_ID,
-        0,
-        &ROUTE_KEY,
-        Some(([0xcd; 32], 1600)),
-        None,
-        &state_of(&output),
-    );
-    assert_eq!(run(&replay).status_code, status::INVALID_CALLBACK);
-
-    // A bounce for another route is not attributable to this settlement.
-    let wrong_key = internal_input(
-        beneficiary_address(),
-        avm_settlement_router::wire::CALLBACK_METHOD_ID,
-        0,
-        b"route-99",
-        Some(([0xcd; 32], 1600)),
-        None,
-        &pending,
-    );
-    assert_eq!(run(&wrong_key).status_code, status::INVALID_CALLBACK);
-
-    // A bounce with an empty body cannot be attributed at all.
-    let no_key = internal_input(
         beneficiary_address(),
         avm_settlement_router::wire::CALLBACK_METHOD_ID,
         0,
         &[],
         Some(([0xcd; 32], 1600)),
         None,
+        &state_of(&output),
+    );
+    assert_eq!(run(&replay).status_code, status::INVALID_CALLBACK);
+
+    // A bounce that smuggles a route key in its body is not merely rejected by
+    // the contract: the canonical decoder refuses the frame altogether.
+    let smuggled = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::CALLBACK_METHOD_ID,
+        0,
+        &ROUTE_KEY,
+        Some(([0xcd; 32], 1600)),
+        None,
         &pending,
     );
-    assert_eq!(run(&no_key).status_code, status::INVALID_CALLBACK);
+    assert!(
+        decode_message_input(&smuggled).is_err(),
+        "non-zero-status callbacks must carry an empty body"
+    );
 }
 
 #[test]
