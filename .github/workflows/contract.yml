@@ -321,8 +321,8 @@ jobs:
           } >> stand-e2e-report.md
           [ "$status" -eq 0 ] || exit "$status"
           mkdir -p target/avm-router
-          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-router/ 2>/dev/null || \
-            cp beneficiary/target/avm/contract.wasm beneficiary/target/avm/contract.acab beneficiary/target/avm/contract.descriptor target/avm-router/
+          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-router/
+          rm -f target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor
           set +e
           out="$(avm-contract-build build --manifest-path beneficiary/Cargo.toml 2>&1)"
           status=$?
@@ -337,11 +337,19 @@ jobs:
           } >> stand-e2e-report.md
           [ "$status" -eq 0 ] || exit "$status"
           mkdir -p target/avm-beneficiary
-          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-beneficiary/ 2>/dev/null || \
+          if [ -f target/avm/contract.wasm ]; then
+            cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-beneficiary/
+          else
             cp beneficiary/target/avm/contract.wasm beneficiary/target/avm/contract.acab beneficiary/target/avm/contract.descriptor target/avm-beneficiary/
+          fi
           # target/avm must hold the router artifacts (the scenario's default).
           cp target/avm-router/contract.wasm target/avm-router/contract.acab target/avm-router/contract.descriptor target/avm/
-          ls -l target/avm-router target/avm-beneficiary >> stand-e2e-report.md 2>&1
+          {
+            echo '```text'
+            sha256sum target/avm-router/contract.wasm target/avm-beneficiary/contract.wasm
+            ls -l target/avm-router target/avm-beneficiary
+            echo '```'
+          } >> stand-e2e-report.md
 
       - name: Run the stand scenario
         run: bash scripts/stand-e2e.sh
