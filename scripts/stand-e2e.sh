@@ -199,6 +199,18 @@ else
     printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
     exit 1
 fi
+# The identity accounts pay call fees; the stand does not create all of them
+# up front ("local call account is absent"), and an identity account id is its
+# pubkey within the dapp (the same addressing `withdraw` uses for the owner
+# payout). Fund each identity account so owner calls can execute.
+for id_name in developer package_owner user; do
+    id_key="$(jq -r ".identities.$id_name // empty" "$WORK/init.json")"
+    if [ -n "$id_key" ]; then
+        stand /dev/null avm-local-stand fund-user --state "$STATE" --wasmtime-profile "$PROFILE" \
+            --address "$DAPP_ID:$id_key" --shells 100000 || true
+    fi
+done
+
 # Call-path smoke test with the exact canonical shape from the SDK
 # getting-started (no args): proves the charge/exec path before we trust any
 # probe verdicts.
