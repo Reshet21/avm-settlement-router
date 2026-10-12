@@ -189,12 +189,14 @@ This is a deterministic fixture, not an audited application contract. Per the
 SDK's own guidance on its examples:
 
 - The `OWNER_PUBKEY` fallback applies only to fixtures whose deploy has
-  neither a 32-byte pin body nor an external deployer. The stand generates
-  fresh identity keys at every `init` and signs the deploy with the `developer`
-  key, which `init` installs as the owner; an exactly 32-byte deploy body
-  (`--init-json "0x<32-byte hex>"`) pins an explicit key instead —
-  `scripts/stand-e2e.sh` verifies owner authorization on the stand. For an
-  application, pin your own owner explicitly or replace the fallback.
+  neither a 32-byte pin body nor an external deployer. On the stand the deploy
+  body is the `ACDP` package envelope; `init` parses it and a 32-byte
+  `--init-json` payload (`--init-json '"0x<64-hex>"'`) pins the owner key, an
+  empty payload falls back to the deploy signer's identity key (the `developer`
+  identity, whose call account the stand does not provide), and any other body
+  length falls back to the trailing 32 bytes — `scripts/stand-e2e.sh` verifies
+  owner authorization on the stand. For an application, pin your own owner
+  explicitly or replace the fallback.
 - Replace every fixed route key and amount; to change a method or event,
   rename it and let `hash_u64_le` pick the new id — never hand-pick one.
 - Read [`docs/method-ids.md`](docs/method-ids.md) — ids are name-derived

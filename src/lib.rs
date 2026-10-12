@@ -46,6 +46,27 @@ use wire::SETTLE_METHOD_ID;
 pub struct SettlementRouter;
 
 impl Contract for SettlementRouter {
+    /// Splits the local stand's `ACDP` deploy envelope into its init payload.
+    ///
+    /// The envelope is `ACDP` magic, a fixed header whose tail records the
+    /// three artifact lengths, an 8-byte salt, the `--init-json` payload, and
+    /// the wasm / descriptor / acab blobs. Returns `None` for any body that
+    /// does not add up, so callers can treat it as a plain byte string.
+    fn acdp_init_payload(body: &[u8]) -> Option<&[u8]> {
+        if !body.starts_with(b"ACDP") {
+            return None;
+        }
+        let wasm_len = u32::from_le_bytes(body.get(272..276)?.try_into().ok()?) as usize;
+        let desc_len = u32::from_le_bytes(body.get(276..280)?.try_into().ok()?) as usize;
+        let acab_len = u64::from_le_bytes(body.get(280..288)?.try_into().ok()?) as usize;
+        let start = 296usize;
+        let end = body.len().checked_sub(wasm_len + desc_len + acab_len)?;
+        if end < start {
+            return None;
+        }
+        Some(&body[start..end])
+    }
+
     /// Installs the routing table for a freshly deployed account.
     ///
     /// Owner selection, in order: an exactly 32-byte deploy body pins the
@@ -66,15 +87,27 @@ impl Contract for SettlementRouter {
     /// so this path emits state only.
     fn init(input: MessageInput<'_>) -> MessageOutput {
         let body = input.message.body();
+        let deployer = match input.caller {
+            Caller::External(pubkey) => Some(pubkey),
+            Caller::Internal(_) => None,
+        };
         let owner = if body.len() == 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(body);
             key
-        } else if body.is_empty() || body.starts_with(b"ACDP") {
-            match input.caller {
-                Caller::External(pubkey) => pubkey,
-                Caller::Internal(_) => router::owner_pubkey(),
+        } else if let Some(payload) = acdp_init_payload(body) {
+            // The local stand deploys as an `ACDP` package envelope whose
+            // header tail is `[wasm_len u32][descriptor_len u32][acab_len u64]
+            // [salt 8][init payload]`; a 32-byte payload pins the owner key.
+            if payload.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(payload);
+                key
+            } else {
+                deployer.unwrap_or_else(router::owner_pubkey)
             }
+        } else if body.is_empty() {
+            deployer.unwrap_or_else(router::owner_pubkey)
         } else if body.len() > 32 {
             let mut key = [0u8; 32];
             key.copy_from_slice(&body[body.len() - 32..]);
@@ -82,20 +115,7 @@ impl Contract for SettlementRouter {
         } else {
             return MessageOutput::failure(status::INVALID_SETTLEMENT);
         };
-        let mut state = RouterState::initial(owner);
-        // TEMPORARY stand diagnostic: locate a 0x42 x 32 probe payload inside
-        // the ACDP deploy envelope and park its offset plus surrounding bytes.
-        let pat = [0x42u8; 32];
-        if let Some(p) = body.windows(32).position(|w| w == pat.as_slice()) {
-            state.migration_payload[0..4].copy_from_slice(&(p as u32).to_le_bytes());
-            let head = body.get(p.saturating_sub(16)..p).unwrap_or(&[]);
-            state.migration_payload[4..4 + head.len()].copy_from_slice(head);
-            let tail = body.get(p + 32..p + 44).unwrap_or(&[]);
-            state.migration_payload[20..20 + tail.len().min(4)].copy_from_slice(&tail[..tail.len().min(4)]);
-            let early = body.get(p.saturating_sub(24)..p.saturating_sub(16)).unwrap_or(&[]);
-            state.last_route_key[..early.len().min(8)].copy_from_slice(&early[..early.len().min(8)]);
-        }
-        MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
+        MessageOutput::success(StateUpdate::FullReplace(RouterState::initial(owner).to_bytes()))
     }
 
     /// Routes a settlement, administers the table, or records a callback.

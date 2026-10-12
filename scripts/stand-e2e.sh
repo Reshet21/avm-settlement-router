@@ -193,27 +193,13 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-PROBE_BODY="\"0x$(printf '42%.0s' $(seq 1 200))\""
-if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$PROBE_BODY")"; then
-    log "router address: $ROUTER (PROBE deploy: 0x42 x 200 init payload)"
+OWNER_HEX="$(jq -r '.identities["package-owner"]' "$WORK/init.json")"
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "\"0x$OWNER_HEX\"")"; then
+    log "router address: $ROUTER (init pins the package-owner key as owner)"
 else
     printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
     exit 1
 fi
-ARGS_JSON="null"
-STEP=$((STEP + 10))
-call_json "$WORK/version.json" settlement.router.version user 0 || true
-python3 - "$WORK/version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
-import json, sys
-st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
-off = int.from_bytes(st[72:76], 'little')
-print('probe: offset', hex(off))
-print('probe: body[p-24..p-16]', st[64:72].hex())
-print('probe: body[p-16..p]', st[76:92].hex())
-print('probe: body[p+32..p+36]', st[92:96].hex())
-PYEOF2
-printf 'PROBE RUN COMPLETE\n' | tee -a "$REPORT"
-exit 0
 # The identity accounts pay call fees; the stand does not create all of them
 # up front ("local call account is absent"). Dump the registry and try every
 # plausible account-id derivation for the developer identity.
@@ -274,13 +260,9 @@ else
 fi
 
 if [ -n "$OWNER_IDENTITY" ]; then
-heading "deploy the beneficiary (a second router instance)"
-STEP=$((STEP + 10))
-if ! BENEFICIARY="$(deploy_instance "$WORK/bene-deploy.json" 62656e652d3031 null)"; then
-    printf 'FAILED: beneficiary deploy did not report an address\n' | tee -a "$REPORT"
-    exit 1
-fi
-log "beneficiary address: $BENEFICIARY"
+heading "beneficiary = the router account (the stand allows one deploy per package)"
+BENEFICIARY="$ROUTER"
+log "beneficiary address: $BENEFICIARY (self-delivery)"
 
 # route.set body: route_key[8] | dapp[32] | account[32] | min_value u128 le
 BENEDAPP="${BENEFICIARY%%:*}"
@@ -337,29 +319,12 @@ need avm-local-stand events --state "$STATE" --wasmtime-profile "$PROFILE"
 need avm-local-stand replay --state "$STATE" --wasmtime-profile "$PROFILE"
 fi
 
-heading "ACDP probe (where the --init-json payload lives)"
-PROBE_BODY="\"0x$(printf '42%.0s' $(seq 1 200))\""
-STEP=$((STEP + 10))
-if PADDR="$(deploy_instance "$WORK/probe-deploy.json" 70726f622d3031 "$PROBE_BODY")"; then
-    ROUTER="$PADDR"
-    ARGS_JSON="null"
-    STEP=$((STEP + 10))
-    call_json "$WORK/probe-version.json" settlement.router.version user 0 || true
-    python3 - "$WORK/probe-version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
-import json, sys
-st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
-off = int.from_bytes(st[72:76], 'little')
-print('probe: offset', hex(off))
-print('probe: before', st[76:84].hex(), 'after', st[84:92].hex())
-PYEOF2
-else
-    log "probe deploy refused: $(head -c 200 "$WORK/probe-deploy.json" 2>/dev/null)"
-fi
+## Result
 
-heading "Result"
-if [ "$failures" -eq 0 ]; then
-    log "all stand steps passed"
-else
-    log "$failures stand step(s) failed"
+log "route.set identity: $OWNER_IDENTITY"
+if [ "$STEP_FAILURES" -eq 0 ]; then
+    printf 'ALL SCENARIO STEPS PASSED\n' | tee -a "$REPORT"
+    exit 0
 fi
-exit "$failures"
+printf '%s stand step(s) failed\n' "$STEP_FAILURES" | tee -a "$REPORT"
+exit 1

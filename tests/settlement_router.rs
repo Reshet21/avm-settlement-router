@@ -383,12 +383,14 @@ fn init_installs_an_owner_key_from_the_deploy_body() {
 /// one owner key that cannot be guessed wrong.
 #[test]
 fn init_installs_the_deployers_key_for_the_acdp_package_envelope() {
-    // The local stand deploys with the ACDP package envelope as the body
-    // (code + ABI + init payload); the deploy signer's key becomes the owner.
+    // The local stand deploys with the ACDP package envelope as the body.
+    // Its header tail is `[wasm_len u32][descriptor_len u32][acab_len u64]
+    // [salt 8]` followed by the init payload and the three blobs; a header-only
+    // envelope (empty init payload) falls back to the deployer key.
     let deployer = [0x78; 32];
-    let mut body = b"ACDP".to_vec();
-    body.extend_from_slice(&[0x17, 0, 0, 0]);
-    body.extend_from_slice(&[0xab; 200]); // package bytes
+    let mut body = vec![0u8; 296];
+    body[0..4].copy_from_slice(b"ACDP");
+    body[288..296].copy_from_slice(b"router01");
     let destination = router_address();
     let message = external_message(deployer, destination, 0, 0, &body, &[], true);
     let bytes = message_input(1, [0; 32], [0; 32], deployer, destination, 0, &[], &[], &message);
@@ -397,6 +399,30 @@ fn init_installs_the_deployers_key_for_the_acdp_package_envelope() {
     assert_eq!(output.status_code, 0);
     let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
     assert_eq!(decoded.owner_pubkey, deployer);
+}
+
+#[test]
+fn init_reads_the_owner_key_from_the_acdp_init_payload() {
+    let pinned = [0xc7u8; 32];
+    let deployer = [0xaau8; 32];
+    let mut body = vec![0u8; 296];
+    body[0..4].copy_from_slice(b"ACDP");
+    body[288..296].copy_from_slice(b"router01");
+    body[272..276].copy_from_slice(&7u32.to_le_bytes()); // wasm
+    body[276..280].copy_from_slice(&5u32.to_le_bytes()); // descriptor
+    body[280..288].copy_from_slice(&3u64.to_le_bytes()); // acab
+    body.extend_from_slice(&pinned); // the 32-byte init payload
+    body.extend_from_slice(&[0x11; 7]);
+    body.extend_from_slice(&[0x22; 5]);
+    body.extend_from_slice(&[0x33; 3]);
+    let destination = router_address();
+    let message = external_message(deployer, destination, 0, 0, &body, &[], true);
+    let bytes = message_input(1, [0; 32], [0; 32], deployer, destination, 0, &[], &[], &message);
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    let output = SettlementRouter::init(input);
+    assert_eq!(output.status_code, 0);
+    let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
+    assert_eq!(decoded.owner_pubkey, pinned);
 }
 
 #[test]
