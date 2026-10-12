@@ -91,8 +91,8 @@ the stand signs the deploy message with one of its generated identities (the
 32-byte deploy body (`--init-json "0x<32-byte hex>"`) pins an explicit key
 instead. The stand generates fresh identity keys at every `init` and reports
 them in its JSON output under `identities`; `scripts/stand-e2e.sh` probes
-which identity answers as owner (a `withdraw` call answers `1702` to the
-owner and `1603` to anyone else) and records it in the report.
+which identity answers as owner (a bodyless `withdraw` call answers `1608`
+to the owner and `1603` to anyone else) and records it in the report.
 
 The scripted version of this whole walkthrough is `scripts/stand-e2e.sh`; the
 `stand-e2e` CI job runs it against the real stand binaries on every push and

@@ -208,15 +208,16 @@ STEP=$((STEP + 10))
 call_json "$WORK/version.json" settlement.router.version user 0 || true
 log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 400)"
 
-# Owner probe: `withdraw` answers 1702 OWNER_CURRENCY_NOT_FOUND to the owner
-# and 1603 UNAUTHORIZED to anyone else, without touching the routing table.
-ARGS_JSON="$(args_json_for "$(printf '%096x' 0)")"
+# Owner probe: a bodyless `withdraw` answers 1608 NOTHING_TO_WITHDRAW to the
+# owner and 1603 UNAUTHORIZED to anyone else, without touching the routing
+# table (withdraw refuses a non-empty body by design).
+ARGS_JSON="null"
 for owner_id in package-owner developer user; do
     STEP=$((STEP + 10))
     call_json "$WORK/owner-probe-$owner_id.json" settlement.router.withdraw "$owner_id" 0 || true
     st="$(acmo_status "$WORK/owner-probe-$owner_id.json")"
-    if [ "$st" = "1702" ]; then
-        log "owner probe ($owner_id, withdraw): status 1702 OWNER_CURRENCY_NOT_FOUND -> owner"
+    if [ "$st" = "1608" ]; then
+        log "owner probe ($owner_id, withdraw): status 1608 NOTHING_TO_WITHDRAW -> owner"
         OWNER_IDENTITY="$owner_id"
         break
     elif [ "$st" = "1603" ]; then
