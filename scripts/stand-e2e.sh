@@ -193,21 +193,11 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null "--owner-id $OWNER_HEX")"; then
-    log "router address: $ROUTER (deploy signed by the package-owner key via --owner-id)"
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
+    log "router address: $ROUTER (owner = the deploy signer's identity key)"
 else
-    INIT_ENCODING="null"
-    if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
-        log "router address: $ROUTER (plain deploy: owner = the deploy caller's key)"
-    else
-        INIT_ENCODING="\"0x$OWNER_HEX\""
-        if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 70696e2d3031 "$INIT_ENCODING")"; then
-            log "router address: $ROUTER (owner key pinned via --init-json $INIT_ENCODING)"
-        else
-            printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
-            exit 1
-        fi
-    fi
+    printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
+    exit 1
 fi
 # Call-path smoke test with the exact canonical shape from the SDK
 # getting-started (no args): proves the charge/exec path before we trust any
@@ -217,18 +207,6 @@ ARGS_JSON="null"
 STEP=$((STEP + 10))
 call_json "$WORK/version.json" settlement.router.version user 0 || true
 log "version smoke call: $(jq -c . "$WORK/version.json" 2>/dev/null | head -c 400)"
-python3 - "$WORK/version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
-import json, sys
-try:
-    st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
-except Exception as e:
-    print('diag decode failed:', e)
-    raise SystemExit(0)
-blen = int.from_bytes(st[72:76], 'little')
-koff = int.from_bytes(st[76:80], 'little')
-print('diag: body_len', blen, 'key_offset', hex(koff), 'kind', st[80], 'pubkey_head', st[81:84].hex())
-print('diag: body[8..16]', st[64:72].hex(), 'body[40..44]', st[84:88].hex(), 'body[48..56]', st[88:96].hex())
-PYEOF2
 
 # Owner probe: `withdraw` answers 1702 OWNER_CURRENCY_NOT_FOUND to the owner
 # and 1603 UNAUTHORIZED to anyone else, without touching the routing table.

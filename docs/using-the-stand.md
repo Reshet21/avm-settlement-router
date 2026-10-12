@@ -86,12 +86,13 @@ avm-local-stand deploy \
 
 `init` installs the empty routing table: `routed_count = 0`, no routes,
 `last_status = AWAITING_CALLBACK`. The owner key comes from the deploy itself:
-`--init-json null` (the canonical empty value) installs the deploying
-identity's pubkey, and `--init-json "0x<32-byte hex>"` pins an explicit key in
-the deploy body. The stand generates fresh identity keys at every `init` and
-reports them in its JSON output under `identities`; `scripts/stand-e2e.sh`
-probes which identity answers as owner (a `withdraw` call answers `1702` to
-the owner and `1603` to anyone else) and records it in the report.
+the stand signs the deploy message with one of its generated identities (the
+`developer` key) and `init` installs that pubkey as the owner. An exactly
+32-byte deploy body (`--init-json "0x<32-byte hex>"`) pins an explicit key
+instead. The stand generates fresh identity keys at every `init` and reports
+them in its JSON output under `identities`; `scripts/stand-e2e.sh` probes
+which identity answers as owner (a `withdraw` call answers `1702` to the
+owner and `1603` to anyone else) and records it in the report.
 
 The scripted version of this whole walkthrough is `scripts/stand-e2e.sh`; the
 `stand-e2e` CI job runs it against the real stand binaries on every push and
@@ -100,10 +101,11 @@ posts `stand-e2e-report.md` to the pull request.
 ## Install A Route
 
 Route administration is owner-only. Call it with the identity the deploy
-installed as owner (the `stand-e2e` report names it; with `--init-json null`
-that is whichever identity the stand used to deploy). If the call answers
-`1603`, the owner key and the identity disagree — the `stand-e2e` report shows
-exactly which key the stand generated and which one the deploy installed. The body is
+installed as owner (the `stand-e2e` report names it; for a stand deploy that
+is `--identity developer`, the identity that signed the deploy). If the call
+answers `1603`, the owner key and the identity disagree — the `stand-e2e`
+report shows exactly which key the stand generated and which one the deploy
+installed. The body is
 `route_key[8] | dapp_id[32] | account_id[32] | min_value[16]`, 88 bytes:
 
 ```bash

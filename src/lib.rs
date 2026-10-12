@@ -48,15 +48,17 @@ pub struct SettlementRouter;
 impl Contract for SettlementRouter {
     /// Installs the routing table for a freshly deployed account.
     ///
-    /// Owner selection, in order: the last 32 bytes of the deploy body when it
-    /// carries at least 32 bytes (the stand delivers `--init-json` as an
-    /// opaque ABI value, which may add an envelope in front of the payload);
-    /// otherwise the deploying caller's external pubkey — the stand generates
-    /// fresh identity keys at every `init`, so the deployer is the one owner
-    /// key that cannot be guessed wrong; otherwise the documented fallback
-    /// [`router::owner_pubkey`]. Any other deploy shape is rejected so a
-    /// garbled deploy cannot install an unintended owner. The ABI's status set
-    /// is fixed, so malformed install arguments answer `INVALID_SETTLEMENT`.
+    /// Owner selection, in order: an exactly 32-byte deploy body pins the
+    /// owner key explicitly; an empty body, or the `ACDP` package envelope
+    /// the local stand deploys with, installs the deploying caller's external
+    /// pubkey — the stand generates fresh identity keys at every `init` and
+    /// signs the deploy with one of them, so the deployer is the one owner key
+    /// that cannot be guessed wrong; any larger custom envelope installs its
+    /// trailing 32 bytes; anything else is rejected so a garbled deploy cannot
+    /// install an unintended owner. Internal deploy callers without a body
+    /// fall back to the documented [`router::owner_pubkey`]. The ABI's status
+    /// set is fixed, so malformed install arguments answer
+    /// `INVALID_SETTLEMENT`.
     ///
     /// Initialization runs once, on the deploy message, and answers with a
     /// [`StateUpdate::FullReplace`] image. The SDK forbids callback intents,
@@ -64,40 +66,23 @@ impl Contract for SettlementRouter {
     /// so this path emits state only.
     fn init(input: MessageInput<'_>) -> MessageOutput {
         let body = input.message.body();
-        let owner = if body.len() >= 32 {
+        let owner = if body.len() == 32 {
             let mut key = [0u8; 32];
-            key.copy_from_slice(&body[body.len() - 32..]);
+            key.copy_from_slice(body);
             key
-        } else if body.is_empty() {
+        } else if body.is_empty() || body.starts_with(b"ACDP") {
             match input.caller {
                 Caller::External(pubkey) => pubkey,
                 Caller::Internal(_) => router::owner_pubkey(),
             }
+        } else if body.len() > 32 {
+            let mut key = [0u8; 32];
+            key.copy_from_slice(&body[body.len() - 32..]);
+            key
         } else {
             return MessageOutput::failure(status::INVALID_SETTLEMENT);
         };
-        let mut state = RouterState::initial(owner);
-        // TEMPORARY stand diagnostics: the local stand's deploy shape (what
-        // `--init-json` puts in the body, and who signs the deploy) is not
-        // documented; park the facts in state fields the codec treats as
-        // opaque so the next call's `state` reveals them. Remove once the
-        // stand's deploy shape is confirmed.
-        let body = input.message.body();
-        let (kind, pubkey) = match input.caller {
-            Caller::External(pk) => (1u8, pk),
-            Caller::Internal(_) => (2u8, [0u8; 32]),
-        };
-        let key_at = body.windows(32).position(|w| w == owner.as_slice());
-        state.last_route_key[0..8].copy_from_slice(&body.get(8..16).unwrap_or(&[0; 8])[..8]);
-        state.migration_payload[0..4].copy_from_slice(&(body.len() as u32).to_le_bytes());
-        state.migration_payload[4..8]
-            .copy_from_slice(&key_at.map(|p| p as u32).unwrap_or(u32::MAX).to_le_bytes());
-        state.migration_payload[8..12].copy_from_slice(&[kind, pubkey[0], pubkey[1], pubkey[2]]);
-        state.migration_payload[12..16]
-            .copy_from_slice(&body.get(40..44).unwrap_or(&[0; 4])[..4]);
-        state.migration_payload[16..24]
-            .copy_from_slice(&body.get(48..56).unwrap_or(&[0; 8])[..8]);
-        MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
+        MessageOutput::success(StateUpdate::FullReplace(RouterState::initial(owner).to_bytes()))
     }
 
     /// Routes a settlement, administers the table, or records a callback.

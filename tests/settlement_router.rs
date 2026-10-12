@@ -330,12 +330,8 @@ fn init_installs_the_declared_state_image() {
     assert!(output.callback_intents.is_empty());
     assert!(output.callback_result_body.is_empty());
     assert!(output.code_upgrade_intent.is_none());
-    // Bytes 64..96 carry temporary stand diagnostics in `init`'s image.
-    let got = state_of(&output);
-    let want = initial_state_bytes();
-    assert_eq!(&got[..64], &want[..64]);
-    assert_eq!(&got[96..], &want[96..]);
-    assert_eq!(got.len(), STATE_BYTES);
+    assert_eq!(state_of(&output), initial_state_bytes());
+    assert_eq!(state_of(&output).len(), STATE_BYTES);
 
     let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
     assert_eq!(decoded.routed_count, 0);
@@ -385,6 +381,24 @@ fn init_installs_an_owner_key_from_the_deploy_body() {
 /// With no deploy body the deployer's external pubkey becomes the owner: the
 /// stand generates fresh identity keys at every init, so the deployer is the
 /// one owner key that cannot be guessed wrong.
+#[test]
+fn init_installs_the_deployers_key_for_the_acdp_package_envelope() {
+    // The local stand deploys with the ACDP package envelope as the body
+    // (code + ABI + init payload); the deploy signer's key becomes the owner.
+    let deployer = [0x78; 32];
+    let mut body = b"ACDP".to_vec();
+    body.extend_from_slice(&[0x17, 0, 0, 0]);
+    body.extend_from_slice(&[0xab; 200]); // package bytes
+    let destination = router_address();
+    let message = external_message(deployer, destination, 0, 0, &body, &[], true);
+    let bytes = message_input(1, [0; 32], [0; 32], deployer, destination, 0, &[], &[], &message);
+    let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
+    let output = SettlementRouter::init(input);
+    assert_eq!(output.status_code, 0);
+    let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
+    assert_eq!(decoded.owner_pubkey, deployer);
+}
+
 #[test]
 fn init_installs_the_deployers_key_when_the_deploy_body_is_empty() {
     let deployer = [0x77; 32];
