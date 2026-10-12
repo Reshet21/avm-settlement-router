@@ -14,8 +14,6 @@
 //! `docs/method-ids.md` records how to confirm them against your installed
 //! stand build before deploying.
 
-use alloc::vec::Vec;
-
 use crate::state::MIGRATION_PAYLOAD_LEN;
 
 /// Byte length of a settlement route key.

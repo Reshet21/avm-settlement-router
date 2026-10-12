@@ -1,18 +1,13 @@
-# Mirrors the AVM SDK distribution's formatting, with the nightly-only options
-# (`imports_granularity`, `group_imports`, `unstable_features`) dropped so that
-# `cargo fmt --check` passes on the pinned stable toolchain. The source still
-# follows the SDK convention of one import per line, grouped std / external /
-# crate.
+# Mirrors the AVM SDK distribution's formatting, restricted to options the
+# pinned stable toolchain actually supports. The SDK's own config adds
+# nightly-only options (`imports_granularity`, `group_imports`,
+# `normalize_comments`, `reorder_impl_items`, `format_*`, `wrap_comments`,
+# `unstable_features`); stable rustfmt warns and ignores those, so they are
+# omitted here to keep the gate's output clean. The source still follows the SDK
+# convention of one import per line, grouped std / external / crate.
 newline_style = "Unix"
 use_field_init_shorthand = true
 use_try_shorthand = true
 use_small_heuristics = "Max"
 style_edition = "2021"
-normalize_comments = true
-reorder_impl_items = true
-reorder_modules = true
-wrap_comments = false
-format_code_in_doc_comments = true
-format_macro_bodies = true
-format_macro_matchers = true
 max_width = 100

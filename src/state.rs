@@ -33,8 +33,6 @@
 //! inheriting the router's partition. An empty slot is all zeros, and
 //! `route_count` must equal the number of non-empty slots.
 
-use alloc::vec::Vec;
-
 /// Total length of the canonical state image: a 96-byte header plus
 /// `MAX_ROUTES * ROUTE_BYTES`.
 pub const STATE_BYTES: usize = 448;

@@ -24,8 +24,6 @@
 //! The routing table itself is owner-administered through `route.set` and
 //! `route.clear`, and retained SHELL can be drained with `withdraw`.
 
-use alloc::vec::Vec;
-
 use avm_contract_sdk::encode_event_fields;
 use avm_contract_sdk::AccountAddress;
 use avm_contract_sdk::CallbackIntent;
@@ -310,7 +308,7 @@ fn withdraw(input: &MessageInput<'_>) -> MessageOutput {
 }
 
 /// Records that the routed settlement was delivered or bounced.
-fn completed(input: &MessageInput<'_>) -> MessageOutput {
+pub fn completed(input: &MessageInput<'_>) -> MessageOutput {
     let (Caller::Internal(_), CanonicalMessage::Internal(message)) = (input.caller, input.message)
     else {
         return MessageOutput::failure(status::INVALID_CALLBACK);
@@ -321,7 +319,7 @@ fn completed(input: &MessageInput<'_>) -> MessageOutput {
     if callback.cause_address != input.destination || message.has_callback_request() {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
-    if message.value_main() != 0 || message.extra().iter().next().is_some() {
+    if message.value_main != 0 || message.extra.iter().next().is_some() {
         return MessageOutput::failure(status::INVALID_CALLBACK);
     }
     let Ok(mut state) = require_state(input) else {
