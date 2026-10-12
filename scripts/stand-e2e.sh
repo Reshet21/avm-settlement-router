@@ -66,8 +66,20 @@ stand() {
     return $status
 }
 
+# Runs a plain check command (e.g. `test -f`), logging it like `stand` does.
 need() {
-    if ! stand "$@"; then
+    printf '\n```text\n$ %s\n' "$*" >>"$REPORT"
+    local status
+    set +e
+    "$@" >>"$REPORT" 2>>"$WORK/last-stderr"
+    status=$?
+    set -e
+    if [ -s "$WORK/last-stderr" ]; then
+        printf -- '--- stderr ---\n' >>"$REPORT"
+        cat "$WORK/last-stderr" >>"$REPORT"
+    fi
+    printf '[exit %d]\n```\n' "$status" >>"$REPORT"
+    if [ "$status" -ne 0 ]; then
         printf 'FAILED: %s\n' "$*" | tee -a "$REPORT"
         failures=$((failures + 1))
     fi

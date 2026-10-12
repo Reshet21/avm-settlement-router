@@ -26,6 +26,7 @@ pub mod wire;
 
 use avm_contract_sdk::encode_event_fields;
 use avm_contract_sdk::CanonicalMessage;
+use avm_contract_sdk::Caller;
 use avm_contract_sdk::Contract;
 use avm_contract_sdk::EventIntent;
 use avm_contract_sdk::EventKind;
