@@ -140,6 +140,65 @@ jobs:
           sha256sum target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
           sha256sum vendor/avm-contract-sdk/src/*.rs
 
+      - name: Publish verification summary
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Trust, but verify: publish the actual test counts, toolchain
+          # identity, and artifact hashes where they are readable outside the
+          # workflow log hosts -- as a pull request comment and on the ci-debug
+          # branch.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          {
+            echo "## AVM settlement router verification"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- toolchain: $(rustc --version) / $(cargo fmt --version)"
+            echo "- state image: $(python3 scripts/model_state.py | grep 'state image')"
+            echo
+            echo "### Test results"
+            echo '```'
+            echo "## sdk canonical tests"
+            cargo test -p avm-contract-sdk 2>&1 | grep -E "^(test result|running)" || true
+            echo "## router integration tests (canonical ACMI frames)"
+            cargo test -p avm-settlement-router --test settlement_router 2>&1 | grep -E "^(test result|running)" || true
+            echo "## in-crate codec tests"
+            cargo test -p avm-settlement-router --lib 2>&1 | grep -E "^(test result|running)" || true
+            echo '```'
+            echo
+            echo "### Artifacts"
+            echo '```'
+            ls -l "$WASM" 2>/dev/null || echo "wasm missing"
+            sha256sum "$WASM" 2>/dev/null || true
+            echo '```'
+            echo
+            echo "<!-- ci-verification -->"
+          } > ci-report.md
+          cat ci-report.md
+          # Upsert a single marked comment on the pull request.
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            PR="${GITHUB_REF_NAME%%/*}"
+            comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- ci-verification -->"))][0].id // empty')"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+                -F body=@ci-report.md
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                -F body=@ci-report.md
+            fi
+          fi
+          # Mirror the report to the ci-debug branch so it survives even where
+          # the GitHub API is unreachable.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-debug-report || true
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add ci-report.md
+          git commit -m "ci-report: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
+          git push -f origin HEAD:ci-debug
+
       - name: Publish failure output for offline debugging
         if: failure()
         run: |
