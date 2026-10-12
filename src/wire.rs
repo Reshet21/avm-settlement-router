@@ -236,9 +236,7 @@ pub fn encode_upgrade_body(args: &UpgradeArgs) -> Vec<u8> {
     body.extend_from_slice(&CODE_UPGRADE_MAGIC);
     body.extend_from_slice(&args.target_selected_code_id);
     body.extend_from_slice(&args.expected_code_hash);
-    body.extend_from_slice(
-        &u32::try_from(MIGRATION_PAYLOAD_LEN).unwrap_or(u32::MAX).to_le_bytes(),
-    );
+    body.extend_from_slice(&u32::try_from(MIGRATION_PAYLOAD_LEN).unwrap_or(u32::MAX).to_le_bytes());
     body.extend_from_slice(&args.migration_payload);
     body
 }
@@ -347,12 +345,8 @@ mod tests {
             assert_ne!(*method, 0);
             assert!(!methods[..index].contains(method), "duplicate method id {method:#x}");
         }
-        let classes = [
-            ROUTED_EVENT_CLASS,
-            SETTLED_EVENT_CLASS,
-            ROUTE_EVENT_CLASS,
-            WITHDRAWN_EVENT_CLASS,
-        ];
+        let classes =
+            [ROUTED_EVENT_CLASS, SETTLED_EVENT_CLASS, ROUTE_EVENT_CLASS, WITHDRAWN_EVENT_CLASS];
         for (index, class) in classes.iter().enumerate() {
             assert!(!classes[..index].contains(class), "duplicate event class {class:#x}");
         }

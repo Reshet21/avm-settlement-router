@@ -310,15 +310,7 @@ fn state_of(output: &MessageOutput) -> Vec<u8> {
 #[test]
 fn init_installs_the_declared_state_image() {
     let destination = router_address();
-    let message = external_message(
-        router::owner_pubkey(),
-        destination,
-        0,
-        0,
-        &[],
-        &[],
-        true,
-    );
+    let message = external_message(router::owner_pubkey(), destination, 0, 0, &[], &[], true);
     let bytes = message_input(
         1,
         [0; 32],

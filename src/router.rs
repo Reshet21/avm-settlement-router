@@ -57,16 +57,16 @@ use crate::wire::CALLBACK_METHOD_ID;
 use crate::wire::CROSS_DAPP_FUEL_RESERVE;
 use crate::wire::OWNER_PUBKEY;
 use crate::wire::PAYOUT_METHOD_ID;
+use crate::wire::ROUTED_EVENT_CLASS;
 use crate::wire::ROUTE_CLEAR_METHOD_ID;
 use crate::wire::ROUTE_EVENT_CLASS;
 use crate::wire::ROUTE_SET_METHOD_ID;
-use crate::wire::ROUTED_EVENT_CLASS;
-use crate::wire::SETTLE_METHOD_ID;
 use crate::wire::SETTLED_EVENT_CLASS;
 use crate::wire::SETTLEMENT_DELIVERY_METHOD_ID;
+use crate::wire::SETTLE_METHOD_ID;
 use crate::wire::VERSION_METHOD_ID;
-use crate::wire::WITHDRAW_METHOD_ID;
 use crate::wire::WITHDRAWN_EVENT_CLASS;
+use crate::wire::WITHDRAW_METHOD_ID;
 
 /// Dispatches a message by method id.
 ///
@@ -161,10 +161,8 @@ fn settle(input: &MessageInput<'_>) -> MessageOutput {
     // A callback is chargeable, so the reserve above is what funds the return
     // leg. Without a callback an unused reserve would be burned instead of
     // returning to the sender.
-    output.callback_intents = vec![CallbackIntent {
-        outbound_index: 0,
-        handler_method_id: CALLBACK_METHOD_ID,
-    }];
+    output.callback_intents =
+        vec![CallbackIntent { outbound_index: 0, handler_method_id: CALLBACK_METHOD_ID }];
     output.event_intents = vec![EventIntent {
         input_index: 0,
         kind: EventKind::External,
@@ -202,8 +200,12 @@ fn route_change(input: &MessageInput<'_>, install: bool) -> MessageOutput {
         {
             return MessageOutput::failure(status::INVALID_ROUTE_ARGS);
         }
-        let route =
-            Route { key: args.route_key, dapp_id: args.dapp_id, account_id: args.account_id, min_value: args.min_value };
+        let route = Route {
+            key: args.route_key,
+            dapp_id: args.dapp_id,
+            account_id: args.account_id,
+            min_value: args.min_value,
+        };
         match state.routes.iter().position(|existing| existing.key == route.key) {
             Some(index) => state.routes[index] = route,
             None => {
@@ -272,7 +274,8 @@ fn withdraw(input: &MessageInput<'_>) -> MessageOutput {
     // The owner is addressed inside this contract's DApp partition. AVM derives
     // the package owner's account id from the package, so this delivery is
     // local for a package-owned router.
-    let owner = AccountAddress { dapp_id: input.destination.dapp_id, account_id: state.owner_pubkey };
+    let owner =
+        AccountAddress { dapp_id: input.destination.dapp_id, account_id: state.owner_pubkey };
 
     let fields = match encode_event_fields(&[
         EventField { name: "balance_main".into(), value: EventValue::U128(input.balance_main) },
@@ -367,7 +370,10 @@ fn completed(input: &MessageInput<'_>) -> MessageOutput {
     state.last_status = callback.status_code;
 
     let fields = match encode_event_fields(&[
-        EventField { name: "completed_count".into(), value: EventValue::U64(state.completed_count) },
+        EventField {
+            name: "completed_count".into(),
+            value: EventValue::U64(state.completed_count),
+        },
         EventField { name: "failed_count".into(), value: EventValue::U64(state.failed_count) },
         EventField {
             name: "origin".into(),
