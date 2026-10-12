@@ -314,9 +314,9 @@ fi
 ## Result
 
 log "route.set identity: $OWNER_IDENTITY"
-if [ "$STEP_FAILURES" -eq 0 ]; then
+if [ "${failures:-0}" -eq 0 ]; then
     printf 'ALL SCENARIO STEPS PASSED\n' | tee -a "$REPORT"
     exit 0
 fi
-printf '%s stand step(s) failed\n' "$STEP_FAILURES" | tee -a "$REPORT"
+printf '%s stand step(s) failed\n' "${failures:-0}" | tee -a "$REPORT"
 exit 1
