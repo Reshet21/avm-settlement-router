@@ -193,7 +193,7 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-OWNER_HEX="$(jq -r '.identities["package-owner"]' "$WORK/init.json")"
+OWNER_HEX="$(jq -r '.identities.package_owner // empty' "$WORK/init.json")"
 if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "\"0x$OWNER_HEX\"")"; then
     log "router address: $ROUTER (init pins the package-owner key as owner)"
 else
