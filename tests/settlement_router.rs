@@ -348,17 +348,8 @@ fn init_installs_an_owner_key_from_the_deploy_body() {
     let custom_owner = [0x5a; 32];
     let destination = router_address();
     let message = external_message(custom_owner, destination, 0, 0, &custom_owner, &[], true);
-    let bytes = message_input(
-        1,
-        [0; 32],
-        [0; 32],
-        custom_owner,
-        destination,
-        0,
-        &[],
-        &[],
-        &message,
-    );
+    let bytes =
+        message_input(1, [0; 32], [0; 32], custom_owner, destination, 0, &[], &[], &message);
     let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
     let output = SettlementRouter::init(input);
     assert_eq!(output.status_code, 0);
@@ -368,17 +359,8 @@ fn init_installs_an_owner_key_from_the_deploy_body() {
 
     // A garbled deploy body must not install half a key.
     let message = external_message(custom_owner, destination, 0, 0, &[0x5a; 31], &[], true);
-    let bytes = message_input(
-        1,
-        [0; 32],
-        [0; 32],
-        custom_owner,
-        destination,
-        0,
-        &[],
-        &[],
-        &message,
-    );
+    let bytes =
+        message_input(1, [0; 32], [0; 32], custom_owner, destination, 0, &[], &[], &message);
     let input = decode_message_input(&bytes).expect("canonical deploy ACMI must decode");
     assert_eq!(SettlementRouter::init(input).status_code, status::INVALID_SETTLEMENT);
 }
