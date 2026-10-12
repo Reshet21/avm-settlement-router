@@ -13,6 +13,9 @@ on:
 # unreachable from restricted environments).
 permissions:
   contents: write
+  # The verification summary posts a pull request comment.
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: contract-${{ github.event.pull_request.number || github.ref }}
@@ -177,16 +180,18 @@ jobs:
           } > ci-report.md
           cat ci-report.md
           # Upsert a single marked comment on the pull request.
+          # The PR comment is best effort; the ci-debug mirror below is the
+          # authoritative copy of this report.
           if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
             PR="${GITHUB_REF_NAME%%/*}"
             comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
-              --jq '[.[] | select(.body | contains("<!-- ci-verification -->"))][0].id // empty')"
+              --jq '[.[] | select(.body | contains("<!-- ci-verification -->"))][0].id // empty' 2>/dev/null || true)"
             if [ -n "$comment_id" ]; then
               gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
-                -F body=@ci-report.md
+                -F body=@ci-report.md || echo "warning: could not update the report comment" >&2
             else
               gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
-                -F body=@ci-report.md
+                -F body=@ci-report.md || echo "warning: could not post the report comment" >&2
             fi
           fi
           # Mirror the report to the ci-debug branch so it survives even where
