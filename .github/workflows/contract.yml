@@ -53,6 +53,9 @@ jobs:
 
       - name: Static consistency checks
         run: |
+          # The consistency check re-derives every method id and event class
+          # from its name with BLAKE3, so the blake3 module is required.
+          python3 -m pip install --quiet blake3
           python3 scripts/check_consistency.py
           python3 scripts/model_state.py
 

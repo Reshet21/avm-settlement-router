@@ -7,12 +7,20 @@
 //!
 //! # Method identifiers
 //!
-//! AVM dispatches on the opaque little-endian `u64` `method_id` carried in the
-//! message header. The ABI in `avm-contract.toml` declares the human-readable
-//! method names; the stand resolves a `--method <name>` argument to the id the
-//! contract must branch on. The ids below are fixed by this contract, and
-//! `docs/method-ids.md` records how to confirm them against your installed
-//! stand build before deploying.
+//! AVM dispatches on the `u64` `method_id` carried in the message header, and
+//! the platform derives it from the method name:
+//!
+//! ```text
+//! method_id = hash_u64_le(name) = u64::from_le_bytes(blake3(name)[..8])
+//! ```
+//!
+//! The same rule derives `event_class` from the event name, and it produces the
+//! reserved upgrade id `0xc2c6c51bc610249d` from `"avm.code_upgrade"`. Every
+//! constant below is that hash of its documented name — verified against the
+//! SDK's own fixtures (`causal.a.version`, `causal.a.forwarded`,
+//! `causal.a.state`) and re-checked on every CI run by
+//! `scripts/check_consistency.py`, so a name and its number cannot drift apart
+//! unnoticed. `docs/method-ids.md` has the full derivation and evidence.
 
 use crate::state::MIGRATION_PAYLOAD_LEN;
 
@@ -43,41 +51,51 @@ pub const CODE_UPGRADE_BODY_BYTES: usize = CODE_UPGRADE_HEADER_BYTES + MIGRATION
 /// Magic prefix of a reserved code-upgrade body.
 pub const CODE_UPGRADE_MAGIC: [u8; 4] = *b"ACUG";
 
-/// `settlement.router.settle` — forward value to a routed beneficiary.
-pub const SETTLE_METHOD_ID: u64 = 0x5a17_e3c0_9d42_6b1f;
+/// `hash_u64_le("settlement.router.settle")` — forward value to a routed
+/// beneficiary.
+pub const SETTLE_METHOD_ID: u64 = 0x82d7_ea8f_0e15_a928;
 
-/// `settlement.router.completed` — callback handler for a routed settlement.
-pub const CALLBACK_METHOD_ID: u64 = 0x2f6b_18d4_7ca9_50e3;
+/// `hash_u64_le("settlement.router.completed")` — callback handler for a
+/// routed settlement.
+pub const CALLBACK_METHOD_ID: u64 = 0x7ce9_d7f5_15c0_5256;
 
-/// `settlement.router.route.set` — install or update one route (owner only).
-pub const ROUTE_SET_METHOD_ID: u64 = 0x6c93_41a7_e528_b0d6;
+/// `hash_u64_le("settlement.router.route.set")` — install or update one route
+/// (owner only).
+pub const ROUTE_SET_METHOD_ID: u64 = 0xae48_8411_c32f_cee2;
 
-/// `settlement.router.route.clear` — remove one route (owner only).
-pub const ROUTE_CLEAR_METHOD_ID: u64 = 0x0b74_d25e_93fa_18c7;
+/// `hash_u64_le("settlement.router.route.clear")` — remove one route (owner
+/// only).
+pub const ROUTE_CLEAR_METHOD_ID: u64 = 0xb0a9_ef6d_b4c2_017c;
 
-/// `settlement.router.withdraw` — drain retained value to the owner.
-pub const WITHDRAW_METHOD_ID: u64 = 0x3de0_9751_4bf6_a2c8;
+/// `hash_u64_le("settlement.router.withdraw")` — drain retained value to the
+/// owner.
+pub const WITHDRAW_METHOD_ID: u64 = 0x3ad0_2292_939e_ff9c;
 
-/// `settlement.router.version` — external empty-body version probe.
-pub const VERSION_METHOD_ID: u64 = 0x71a4_c906_2e58_d3fb;
+/// `hash_u64_le("settlement.router.version")` — external empty-body version
+/// probe.
+pub const VERSION_METHOD_ID: u64 = 0x8fab_f502_3447_277c;
 
-/// Method id used on the outbound settlement delivery.
-pub const SETTLEMENT_DELIVERY_METHOD_ID: u64 = 0x1f2e_3d4c_5b6a_7988;
+/// `hash_u64_le("settlement.beneficiary.receive")` — method the router calls on
+/// the routed beneficiary. It belongs to the destination contract's ABI, so it
+/// is derived here from its canonical name rather than declared in
+/// `avm-contract.toml`.
+pub const SETTLEMENT_DELIVERY_METHOD_ID: u64 = 0x0ef6_cc14_d234_ec6f;
 
-/// Method id used on the owner withdrawal payout.
-pub const PAYOUT_METHOD_ID: u64 = 0x4c2d_0105_ca92_4509;
+/// `hash_u64_le("settlement.owner.payout")` — method the router calls when
+/// draining retained value to the owner account.
+pub const PAYOUT_METHOD_ID: u64 = 0xf507_acdc_f6f5_c790;
 
-/// Event class of `settlement.router.routed`.
-pub const ROUTED_EVENT_CLASS: u64 = 0x6d1f_82a4_c390_57be;
+/// `hash_u64_le("settlement.router.routed")`.
+pub const ROUTED_EVENT_CLASS: u64 = 0xf45f_52c6_ebbc_5b2e;
 
-/// Event class of `settlement.router.settled`.
-pub const SETTLED_EVENT_CLASS: u64 = 0x2b7e_41c9_05da_8f36;
+/// `hash_u64_le("settlement.router.settled")`.
+pub const SETTLED_EVENT_CLASS: u64 = 0x182e_4064_462d_e927;
 
-/// Event class of `settlement.router.route_changed`.
-pub const ROUTE_EVENT_CLASS: u64 = 0x7c05_39be_14fa_d682;
+/// `hash_u64_le("settlement.router.route_changed")`.
+pub const ROUTE_EVENT_CLASS: u64 = 0x0b07_6b3d_59a4_889c;
 
-/// Event class of `settlement.router.withdrawn`.
-pub const WITHDRAWN_EVENT_CLASS: u64 = 0x48a2_d170_96cb_3e5f;
+/// `hash_u64_le("settlement.router.withdrawn")`.
+pub const WITHDRAWN_EVENT_CLASS: u64 = 0xf322_0038_13d7_882c;
 
 /// Admin key authorized to change the routing table.
 ///

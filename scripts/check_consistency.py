@@ -226,8 +226,77 @@ def main() -> int:
     if len(set(classes)) != len(classes):
         fail("duplicate event classes in wire.rs")
 
+    check_hash_derived_ids(sources["wire"])
+
     report()
     return 1 if FAILURES else 0
+
+
+# The platform derives dispatch ids from names: `method_id = hash_u64_le(name)`,
+# which is the first eight bytes of BLAKE3(name) read little-endian. The same
+# rule derives `event_class` from the event name and the reserved upgrade id
+# from `"avm.code_upgrade"`. Every constant below must equal the hash of its
+# name, so a renamed method can never keep a stale number.
+HASH_DERIVED_IDS = {
+    "SETTLE_METHOD_ID": "settlement.router.settle",
+    "CALLBACK_METHOD_ID": "settlement.router.completed",
+    "ROUTE_SET_METHOD_ID": "settlement.router.route.set",
+    "ROUTE_CLEAR_METHOD_ID": "settlement.router.route.clear",
+    "WITHDRAW_METHOD_ID": "settlement.router.withdraw",
+    "VERSION_METHOD_ID": "settlement.router.version",
+    "SETTLEMENT_DELIVERY_METHOD_ID": "settlement.beneficiary.receive",
+    "PAYOUT_METHOD_ID": "settlement.owner.payout",
+    "ROUTED_EVENT_CLASS": "settlement.router.routed",
+    "SETTLED_EVENT_CLASS": "settlement.router.settled",
+    "ROUTE_EVENT_CLASS": "settlement.router.route_changed",
+    "WITHDRAWN_EVENT_CLASS": "settlement.router.withdrawn",
+}
+
+# Evidence that the derivation rule is the right one, taken from the SDK's own
+# fixtures and the reserved upgrade constant.
+WITNESSES = {
+    "causal.a.version": 0x0DC1FEE693A5219C,
+    "causal.a.forwarded": 0x71228A3DC1799631,
+    "causal.a.state": 0x127E58F93E9D40F8,
+    "avm.code_upgrade": 0xC2C6C51BC610249D,
+}
+
+
+def hash_u64_le(name: str) -> int:
+    try:
+        import blake3  # type: ignore
+    except ImportError:
+        raise RuntimeError(
+            "the blake3 module is required to verify method ids"
+            " (pip install blake3); refusing to skip the check"
+        )
+    digest = blake3.blake3(name.encode()).digest(8)
+    return int.from_bytes(digest, "little")
+
+
+def check_hash_derived_ids(wire_source: str) -> None:
+    try:
+        for name, expected in WITNESSES.items():
+            actual = hash_u64_le(name)
+            if actual != expected:
+                fail(
+                    f"hash witness broken: hash_u64_le({name!r}) = "
+                    f"0x{actual:016x}, expected 0x{expected:016x}"
+                )
+        for constant, name in HASH_DERIVED_IDS.items():
+            match = re.search(rf"pub const {constant}: u64 = (0x[0-9a-f_]+);", wire_source)
+            if not match:
+                fail(f"{constant} is not defined in wire.rs")
+                continue
+            actual = int(match.group(1).replace("_", ""), 16)
+            expected = hash_u64_le(name)
+            if actual != expected:
+                fail(
+                    f"{constant} = 0x{actual:016x} but hash_u64_le({name!r}) = "
+                    f"0x{expected:016x}; method ids are name-derived and must match"
+                )
+    except RuntimeError as error:
+        fail(str(error))
 
 
 def report() -> None:

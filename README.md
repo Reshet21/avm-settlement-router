@@ -93,6 +93,8 @@ cargo +1.93.0 build --release --target wasm32-unknown-unknown
    malformed-image rejection, body codecs, identifier uniqueness.
 2. **Vendored SDK tests** (`vendor/avm-contract-sdk/tests/canonical_io.rs`) —
    the canonical `ACMI`/`ACMO`/`ACBI`/`ACBO` byte-level guarantees.
+   `scripts/check_consistency.py` additionally re-derives every method id and
+   event class from its name (`hash_u64_le` = BLAKE3-8LE).
 3. **Contract integration tests** (`tests/settlement_router.rs`) — build real
    canonical `ACMI` frames byte for byte, decode them with the shipped SDK
    decoder, run the contract, and encode the result with the shipped encoder.
@@ -120,13 +122,17 @@ mode mismatch.
 - **Proven by design review against the SDK source**: canonical frame layouts
   and encoder validation rules. Real defects were found and fixed this way; see
   [Design notes](#design-notes).
-- **Not yet proven**: the name-to-`method_id` resolution of the stand binaries
-  and the on-stand end-to-end journey (`deploy` / `call` / `replay`), which
-  need the `avm-local-stand` and `avm-contract-build` release binaries and a
-  Rust toolchain — neither was available in the authoring environment. See
-  [`docs/method-ids.md`](docs/method-ids.md) and
-  [`docs/using-the-stand.md`](docs/using-the-stand.md) for the exact
-  verification procedure.
+- **Proven by derivation**: every `method_id` and `event_class` is
+  `hash_u64_le(name)` — the first eight bytes of BLAKE3(name) little-endian —
+  the same rule the platform uses (`CODE_UPGRADE_METHOD_ID` is
+  `hash_u64_le("avm.code_upgrade")`). The rule reproduces the SDK's own fixture
+  constants exactly, and CI re-derives every constant on each run. See
+  [`docs/method-ids.md`](docs/method-ids.md).
+- **Not yet proven**: the on-stand end-to-end journey (`deploy` / `call` /
+  `replay`), which needs the `avm-local-stand` and `avm-contract-build` release
+  binaries — they were not available in the authoring environment.
+  [`docs/using-the-stand.md`](docs/using-the-stand.md) has the exact
+  walkthrough.
 
 ## Design notes
 
@@ -153,8 +159,9 @@ SDK's own guidance on its examples:
 
 - Replace `OWNER_PUBKEY` in `src/wire.rs`.
 - Replace every fixed route key, amount, event class, and method id.
-- Read [`docs/method-ids.md`](docs/method-ids.md) — the name-to-id resolution
-  lives in the closed stand binaries and must be confirmed against your build.
+- Read [`docs/method-ids.md`](docs/method-ids.md) — ids are name-derived
+  (`hash_u64_le`), so renaming a method means recomputing its constant; the
+  consistency check enforces this.
 - `withdraw` addresses the owner inside the router's own `dapp_id`, so it
   assumes the package-owner account is the package-derived account for that
   partition. Confirm that against your deployment topology.
