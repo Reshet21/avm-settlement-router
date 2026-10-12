@@ -193,12 +193,27 @@ heading "deploy the router (owner = the deploying identity)"
 # canonical --init-json forms are null or a 0x byte string).
 ROUTER=""
 OWNER_IDENTITY=""
-if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 null)"; then
-    log "router address: $ROUTER (owner = the deploy signer's identity key)"
+PROBE_BODY="\"0x$(printf '42%.0s' $(seq 1 200))\""
+if ROUTER="$(deploy_instance "$WORK/deploy-attempt.json" 726f757465723031 "$PROBE_BODY")"; then
+    log "router address: $ROUTER (PROBE deploy: 0x42 x 200 init payload)"
 else
     printf 'FAILED: router deploy did not complete\n' | tee -a "$REPORT"
     exit 1
 fi
+ARGS_JSON="null"
+STEP=$((STEP + 10))
+call_json "$WORK/version.json" settlement.router.version user 0 || true
+python3 - "$WORK/version.json" >>"$REPORT" 2>&1 <<'PYEOF2' || true
+import json, sys
+st = bytes.fromhex(json.load(open(sys.argv[1])).get('state', '0x')[2:])
+off = int.from_bytes(st[72:76], 'little')
+print('probe: offset', hex(off))
+print('probe: body[p-24..p-16]', st[64:72].hex())
+print('probe: body[p-16..p]', st[76:92].hex())
+print('probe: body[p+32..p+36]', st[92:96].hex())
+PYEOF2
+printf 'PROBE RUN COMPLETE\n' | tee -a "$REPORT"
+exit 0
 # The identity accounts pay call fees; the stand does not create all of them
 # up front ("local call account is absent"). Dump the registry and try every
 # plausible account-id derivation for the developer identity.

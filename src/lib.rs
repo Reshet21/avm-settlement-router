@@ -88,10 +88,12 @@ impl Contract for SettlementRouter {
         let pat = [0x42u8; 32];
         if let Some(p) = body.windows(32).position(|w| w == pat.as_slice()) {
             state.migration_payload[0..4].copy_from_slice(&(p as u32).to_le_bytes());
-            let head = body.get(p.saturating_sub(8)..p).unwrap_or(&[]);
+            let head = body.get(p.saturating_sub(16)..p).unwrap_or(&[]);
             state.migration_payload[4..4 + head.len()].copy_from_slice(head);
-            let tail = body.get(p + 32..p + 40).unwrap_or(&[]);
-            state.migration_payload[12..12 + tail.len()].copy_from_slice(tail);
+            let tail = body.get(p + 32..p + 44).unwrap_or(&[]);
+            state.migration_payload[20..20 + tail.len().min(4)].copy_from_slice(&tail[..tail.len().min(4)]);
+            let early = body.get(p.saturating_sub(24)..p.saturating_sub(16)).unwrap_or(&[]);
+            state.last_route_key[..early.len().min(8)].copy_from_slice(&early[..early.len().min(8)]);
         }
         MessageOutput::success(StateUpdate::FullReplace(state.to_bytes()))
     }
