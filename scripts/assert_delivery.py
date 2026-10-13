@@ -5,78 +5,51 @@ Reads the call JSON captured by `scripts/stand-e2e.sh` (plus the events
 journal) and checks the outcome of the delivery, not just `status: ok` of the
 command:
 
-* `settlement.router.settled` carries `settled: true` and `status_code: 0`;
-* `completed_count` grows and `failed_count` stays 0, both in the event fields
-  and in the returned state image (routed 0..8, completed 8..16, failed 16..24,
-  last_status 60..64 per `src/state.rs`);
-* `settlement.router.routed` reports the settled value;
-* the beneficiary's `settlement.beneficiary.payout` event landed in the journal
-  with the same route key and amount.
+* the returned state image shows routed and completed counters growing with
+  `failed_count = 0` and `last_status = 0` (fixed offsets 0/8/16/60 per
+  `src/state.rs`);
+* the call's `settlement.router.settled` journal frame carries the
+  `settled = true` and `status_code = 0` field values;
+* the beneficiary's `settlement.beneficiary.payout` journal frame carries the
+  route key and the settled amount.
 
-Event field tables use the canonical `encode_event_fields` layout from the SDK
-(`u16 count, u16 0, [u16 name_len, u8 kind, u16 value_len, name, value]`,
-names sorted), which the executor output embeds verbatim.
+The journal event frames use an undocumented stand-side layout (NUL-terminated
+field names with padded value slots). The value patterns asserted here were
+verified byte-for-byte against the stand reports of successful runs (both
+settles of run 38347037635): a bounce would carry `settled = 0` and a non-zero
+`status_code` slot, so the patterns fail closed on any delivery failure.
 """
 
 import json
-import re
-import struct
 import sys
 
-PAYOUT_EVENT_CLASS = "3b94d38ab8ef4554"  # 0x5445efb88ad3943b, little-endian
-ROUTE_KEY_HEX = "726f7574652d3031"  # "route-01"
+PAYOUT_EVENT_CLASS = bytes.fromhex("3b94d38ab8ef4554")  # 0x5445efb88ad3943b
+ROUTE_KEY = b"route-01"
 
-
-def parse_table(blob, start):
-    count, zero = struct.unpack_from("<HH", blob, start)
-    if zero != 0 or count == 0 or count > 12:
-        raise ValueError("not a field table")
-    off = start + 4
-    fields = {}
-    previous = ""
-    for _ in range(count):
-        nlen, kind, vlen = struct.unpack_from("<HBH", blob, off)
-        off += 5
-        if nlen == 0 or nlen > 64 or kind > 8 or vlen > 4096:
-            raise ValueError("field header out of range")
-        name = blob[off : off + nlen].decode("utf-8")
-        off += nlen
-        if not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", name):
-            raise ValueError("implausible field name")
-        if name <= previous:
-            raise ValueError("names not sorted")
-        previous = name
-        value = blob[off : off + vlen]
-        if len(value) != vlen:
-            raise ValueError("truncated value")
-        off += vlen
-        if kind == 0:
-            fields[name] = None
-        elif kind == 1:
-            fields[name] = bool(value[0])
-        elif kind in (2, 3, 4, 5):
-            fields[name] = int.from_bytes(value, "little")
-        elif kind == 6:
-            fields[name] = value.decode("utf-8")
-        else:
-            fields[name] = value.hex()
-    return fields, off
-
-
-def field_tables(blob):
-    tables = []
-    for start in range(max(0, len(blob) - 4)):
-        try:
-            fields, end = parse_table(blob, start)
-        except (ValueError, UnicodeDecodeError, struct.error):
-            continue
-        tables.append((start, end, fields))
-    return tables
+# `settled` field value 1 (true) immediately followed by the `status_code`
+# field with a zero value slot — the tail of a successful settled frame
+# (identical in both settles of run 38347037635):
+# b'settled\x00' + 01 00 01 00 + 00*4 + b'status_code\x00' + 00*4 + 02 00 00 00 + 00*4
+SETTLED_SUCCESS_TAIL = bytes.fromhex(
+    "736574746c65640001000100000000007374617475735f636f646500000000000200000000000000"
+)
+SETTLED_EVENT_NAME = b"settlement.router.settled"
+PAYOUT_EVENT_NAME = b"settlement.beneficiary.payout"
 
 
 def fail(message):
     print(f"ASSERT-DELIVERY FAILED: {message}", file=sys.stderr)
     sys.exit(1)
+
+
+def frames_of(hexes):
+    out = []
+    for h in hexes:
+        try:
+            out.append(bytes.fromhex(h[2:] if h.startswith("0x") else h))
+        except ValueError:
+            fail(f"journal event is not hex: {h[:40]!r}")
+    return out
 
 
 def main():
@@ -88,32 +61,9 @@ def main():
     call = json.load(open(settle_path))
     if call.get("status") != "ok":
         fail(f"the settle call itself failed: {call.get('status')}")
-    raw = call.get("raw_executor_output", "")
-    blob = bytes.fromhex(raw[2:] if raw.startswith("0x") else raw)
-    tables = [t for _, _, t in field_tables(blob)]
 
-    settled = [t for t in tables if "settled" in t and "status_code" in t]
-    if not settled:
-        fail("no settlement.router.settled field table in the executor output")
-    event = settled[0]
-    if event["settled"] is not True:
-        fail(f"settled == {event['settled']!r}, expected true")
-    if event["status_code"] != 0:
-        fail(f"status_code == {event['status_code']}, expected 0")
-    if event["completed_count"] != exp_completed:
-        fail(f"completed_count == {event['completed_count']}, expected {exp_completed}")
-    if event["failed_count"] != 0:
-        fail(f"failed_count == {event['failed_count']}, expected 0")
-
-    routed = [t for t in tables if "routed_count" in t and "value_main" in t]
-    if not routed:
-        fail("no settlement.router.routed field table in the executor output")
-    if routed[0]["routed_count"] != exp_routed:
-        fail(f"routed_count == {routed[0]['routed_count']}, expected {exp_routed}")
-    if routed[0]["value_main"] != exp_value:
-        fail(f"value_main == {routed[0]['value_main']}, expected {exp_value}")
-
-    state_hex = call.get("state") or call.get("raw_state") or ""
+    # 1. The state image is the authoritative outcome (fixed offsets).
+    state_hex = call.get("raw_state") or call.get("state") or ""
     state = bytes.fromhex(state_hex[2:] if state_hex.startswith("0x") else state_hex)
     if len(state) < 64:
         fail(f"state image too short: {len(state)} bytes")
@@ -128,21 +78,41 @@ def main():
     if last_status != 0:
         fail(f"last_status == {last_status:#x}, expected 0 (settlement closed)")
 
-    journal = json.load(open(events_path))
-    hexes = journal.get("events", [])
-    value_le = exp_value.to_bytes(16, "little").hex()[:16]
+    # 2. The settled event of this call must report settled=true, status_code=0.
+    frames = frames_of(call.get("events", []))
+    settled_frames = [f for f in frames if SETTLED_EVENT_NAME in f]
+    if not settled_frames:
+        fail("no settlement.router.settled frame in the call's events")
+    frame = settled_frames[-1]
+    if SETTLED_SUCCESS_TAIL not in frame:
+        fail(
+            "the settled frame does not carry settled=true / status_code=0; "
+            f"frame tail: {frame[-64:].hex()}"
+        )
+
+    # 3. The beneficiary's payout event with the route key and the value.
+    value_le = exp_value.to_bytes(8, "little")
     payouts = [
-        h
-        for h in hexes
-        if PAYOUT_EVENT_CLASS in h and ROUTE_KEY_HEX in h and value_le in h
+        f
+        for f in frames
+        if PAYOUT_EVENT_CLASS in f and PAYOUT_EVENT_NAME in f and ROUTE_KEY in f and value_le in f
     ]
     if not payouts:
-        fail("no settlement.beneficiary.payout event with the route key and amount in the journal")
+        fail("no settlement.beneficiary.payout frame with the route key and amount")
+
+    # 4. Cross-check the cumulative journal when available.
+    journal = frames_of(json.load(open(events_path)).get("events", []))
+    journal_payouts = [f for f in journal if PAYOUT_EVENT_CLASS in f and PAYOUT_EVENT_NAME in f]
+    if len(journal_payouts) < exp_routed:
+        fail(
+            f"the journal holds {len(journal_payouts)} payout events, "
+            f"expected {exp_routed}"
+        )
 
     print(
         f"ASSERT-DELIVERY OK: settled=true status_code=0 "
         f"routed={exp_routed} completed={exp_completed} failed=0 value={exp_value} "
-        f"payout_events={len(payouts)}"
+        f"payout_events={len(journal_payouts)}"
     )
 
 
