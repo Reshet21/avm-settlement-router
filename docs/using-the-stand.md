@@ -177,10 +177,10 @@ python3 scripts/assert_delivery.py settle.json events.json 1 1 500
 ```
 
 `scripts/assert_delivery.py` fails loudly unless the *outcome* is a completed
-delivery: `settlement.router.settled` with `settled: true` and
-`status_code: 0`, `completed_count = 1` with `failed_count = 0` in both the
-event fields and the state image, and a `settlement.beneficiary.payout` event
-carrying the route key and the settled value. `scripts/stand-e2e.sh` runs it
+delivery: `settlement.router.settled` with `settled: true` and `status_code: 0`
+in its journal frame, `completed_count = 1` with `failed_count = 0` and
+`last_status = 0` in the state image, and a `settlement.beneficiary.payout`
+event carrying the route key and the settled value. `scripts/stand-e2e.sh` runs it
 after both settles of the scenario.
 
 The bounce path — a delivery with no receiver at the beneficiary address — is
