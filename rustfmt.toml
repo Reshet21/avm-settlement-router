@@ -1,0 +1,13 @@
+# Mirrors the AVM SDK distribution's formatting, restricted to options the
+# pinned stable toolchain actually supports. The SDK's own config adds
+# nightly-only options (`imports_granularity`, `group_imports`,
+# `normalize_comments`, `reorder_impl_items`, `format_*`, `wrap_comments`,
+# `unstable_features`); stable rustfmt warns and ignores those, so they are
+# omitted here to keep the gate's output clean. The source still follows the SDK
+# convention of one import per line, grouped std / external / crate.
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+use_small_heuristics = "Max"
+style_edition = "2021"
+max_width = 100

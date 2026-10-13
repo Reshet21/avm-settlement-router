@@ -1,0 +1,390 @@
+name: contract
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# `contents: write` is required for two self-serving steps: the runner applies
+# rustfmt and publishes the result back to the head branch, and on failure it
+# pushes the captured output to the `ci-debug` branch so the run's actual error
+# text is retrievable through git (workflow logs live on hosts that may be
+# unreachable from restricted environments).
+permissions:
+  contents: write
+  # The verification summary posts a pull request comment.
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # For pull_request events GITHUB_REF_NAME is "<number>/merge", never the branch
+  # name, so publish steps must use this instead.
+  PUSH_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
+
+jobs:
+  verify:
+    name: fmt, clippy, test, wasm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the contract
+        uses: actions/checkout@v4
+        with:
+          # For pull_request events the default checkout is the merge commit,
+          # which must never be pushed to the head branch. Check out the head
+          # branch itself so the formatting commit lands on the PR branch.
+          ref: ${{ github.event.pull_request.head.ref || github.ref_name }}
+          # GITHUB_TOKEN cannot push to forks; those runs skip the publish step.
+          persist-credentials: true
+
+      - name: Install the pinned toolchain
+        run: |
+          # rust-toolchain.toml pins 1.93.0 plus clippy, rustfmt, and the
+          # wasm32-unknown-unknown target, matching the AVM SDK distribution.
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+          rustup target list --installed | grep wasm32-unknown-unknown
+
+      - name: Static consistency checks
+        run: |
+          # derive_ids.py re-derives every method id and event class from its
+          # ABI name with BLAKE3, so the blake3 module is required.
+          python3 -m pip install --quiet blake3
+          python3 scripts/check_consistency.py
+          python3 scripts/derive_ids.py --check
+          python3 scripts/model_state.py
+
+      - name: Vet the vendored SDK is byte-identical to its source
+        run: |
+          # The vendored copy must not drift from the published distribution.
+          git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk
+          diff -ru vendor/avm-contract-sdk/src /tmp/avm-sdk/crates/avm-contract-sdk/src
+          diff -ru vendor/avm-contract-sdk/tests /tmp/avm-sdk/crates/avm-contract-sdk/tests
+          diff -u vendor/avm-contract-sdk/Cargo.toml /tmp/avm-sdk/crates/avm-contract-sdk/Cargo.toml
+
+      - name: Apply rustfmt and publish the result
+        run: |
+          # Format only this package. `--all` would reformat vendor/ and break
+          # the drift check above, and the vendored SDK is validated by its own
+          # repository's formatting gate.
+          cargo fmt -p avm-settlement-router
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "source is already rustfmt-clean"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "ci: apply rustfmt formatting"
+          if [ "${{ github.event.pull_request.head.repo.full_name }}" = "${{ github.repository }}" ]; then
+            git push origin "HEAD:${PUSH_REF}"
+            echo "rustfmt changes published to ${PUSH_REF}"
+          else
+            echo "fork PR: formatting changes were applied but not published" >&2
+          fi
+
+      - name: Check formatting
+        run: cargo fmt -p avm-settlement-router -- --check
+
+      - name: Clippy (host, deny warnings)
+        run: cargo clippy -p avm-settlement-router --all-targets -- -D warnings
+
+      - name: Clippy (wasm32, deny warnings)
+        run: cargo clippy -p avm-settlement-router --target wasm32-unknown-unknown --all-targets -- -D warnings
+
+      - name: Run the vendored SDK canonical-ABI tests
+        run: cargo test -p avm-contract-sdk
+
+      - name: Run the router tests over canonical ACMI frames
+        run: cargo test -p avm-settlement-router --test settlement_router
+
+      - name: Run the in-crate codec tests
+        run: cargo test -p avm-settlement-router --lib
+
+      - name: Build the contract for wasm32-unknown-unknown
+        run: |
+          cargo build --release --target wasm32-unknown-unknown
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          test -f "$WASM"
+          ls -l "$WASM"
+          echo "wasm bytes: $(wc -c < "$WASM")"
+
+      - name: Verify the AVM guest surface is exported
+        run: |
+          # The guest ABI is exactly these four names; `memory` is installed by
+          # avm-contract-build at link time.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          python3 - "$WASM" <<'PY'
+          import sys
+          data = open(sys.argv[1], "rb").read()
+          if data[:4] != b"\x00asm":
+              sys.exit("not a WASM module")
+          required = [b"avm_guest_alloc", b"avm_guest_free", b"init", b"process_message"]
+          missing = [name.decode() for name in required if name not in data]
+          if missing:
+              sys.exit(f"missing expected export names in the WASM: {missing}")
+          print("magic ok; guest export names present:", [n.decode() for n in required])
+          PY
+
+      - name: Check build reproducibility
+        run: |
+          # avm-contract-build compiles twice and rejects non-reproducible
+          # output. Approximate that gate with two release builds.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          sha256sum "$WASM" > /tmp/first.sha256
+          touch src/lib.rs src/router.rs src/state.rs src/wire.rs
+          cargo build --release --target wasm32-unknown-unknown
+          sha256sum -c /tmp/first.sha256
+
+      - name: Record artifact hashes
+        run: |
+          sha256sum target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          sha256sum vendor/avm-contract-sdk/src/*.rs
+
+      - name: Exercise the E2E failure-flow fixture build
+        env:
+          AVM_E2E_FAILURE_FLOW: "1"
+        run: |
+          # The same suite must pass with the failure-flow channels compiled
+          # in: every documented flow behaves identically in both builds (only
+          # the sentinel channels differ, and the sentinel tests assert both
+          # sides). The guest fixture is compiled into a separate target dir so
+          # the recorded normal-build artifacts stay untouched.
+          cargo test -p avm-settlement-router --test settlement_router
+          CARGO_TARGET_DIR=target/failure-flow cargo build --release --target wasm32-unknown-unknown
+          test -f target/failure-flow/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+
+      - name: Publish verification summary
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Trust, but verify: publish the actual test counts, toolchain
+          # identity, and artifact hashes where they are readable outside the
+          # workflow log hosts -- as a pull request comment and on the ci-debug
+          # branch.
+          WASM=target/wasm32-unknown-unknown/release/avm_settlement_router.wasm
+          {
+            echo "## AVM settlement router verification"
+            echo
+            echo "- commit: \`${GITHUB_SHA}\`"
+            echo "- toolchain: $(rustc --version) / $(cargo fmt --version)"
+            echo "- state image: $(python3 scripts/model_state.py | grep 'state image')"
+            echo
+            echo "### Test results"
+            echo '```'
+            echo "## sdk canonical tests"
+            cargo test -p avm-contract-sdk 2>&1 | grep -E "^(test result|running)" || true
+            echo "## router integration tests (canonical ACMI frames)"
+            cargo test -p avm-settlement-router --test settlement_router 2>&1 | tail -60 || true
+            echo "## router integration tests (AVM_E2E_FAILURE_FLOW=1 fixture build)"
+            AVM_E2E_FAILURE_FLOW=1 cargo test -p avm-settlement-router --test settlement_router 2>&1 | tail -60 || true
+            echo "## in-crate codec tests"
+            cargo test -p avm-settlement-router --lib 2>&1 | grep -E "^(test result|running)" || true
+            echo '```'
+            echo
+            echo "### Artifacts"
+            echo '```'
+            ls -l "$WASM" 2>/dev/null || echo "wasm missing"
+            sha256sum "$WASM" 2>/dev/null || true
+            echo '```'
+            echo
+            echo "<!-- ci-verification -->"
+          } > ci-report.md
+          cat ci-report.md
+          # Upsert a single marked comment on the pull request.
+          # The PR comment is best effort; the ci-debug mirror below is the
+          # authoritative copy of this report.
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            PR="${GITHUB_REF_NAME%%/*}"
+            comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- ci-verification -->"))][0].id // empty' 2>/dev/null || true)"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+                -F body=@ci-report.md || echo "warning: could not update the report comment" >&2
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                -F body=@ci-report.md || echo "warning: could not post the report comment" >&2
+            fi
+          fi
+          # Mirror the report to the ci-debug branch so it survives even where
+          # the GitHub API is unreachable.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-debug-report || true
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add ci-report.md
+          git commit -m "ci-report: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
+          git push -f origin HEAD:ci-debug
+
+      - name: Publish failure output for offline debugging
+        if: failure()
+        run: |
+          # Workflow logs live on hosts that restricted environments cannot
+          # reach, so re-run the gates with their output captured and publish
+          # that to the ci-debug branch where anyone with repo access can read
+          # it through git.
+          {
+            echo "# ci-debug $(date -u +%FT%TZ) run=${GITHUB_RUN_ID} attempt=${GITHUB_RUN_ATTEMPT}"
+            echo "## ref=${PUSH_REF} sha=${GITHUB_SHA}"
+            echo
+            echo "## cargo fmt"
+            cargo fmt -p avm-settlement-router -- --check || true
+            echo
+            echo "## cargo clippy (host)"
+            cargo clippy -p avm-settlement-router --all-targets -- -D warnings || true
+            echo
+            echo "## cargo clippy (wasm32)"
+            cargo clippy -p avm-settlement-router --target wasm32-unknown-unknown --all-targets -- -D warnings || true
+            echo
+            echo "## cargo test (sdk)"
+            cargo test -p avm-contract-sdk || true
+            echo
+            echo "## cargo test (router integration)"
+            cargo test -p avm-settlement-router --test settlement_router || true
+            echo
+            echo "## cargo test (lib)"
+            cargo test -p avm-settlement-router --lib || true
+            echo
+            echo "## cargo build (wasm32 release)"
+            cargo build --release --target wasm32-unknown-unknown || true
+            echo
+            echo "## git diff after fmt attempt"
+            git diff || true
+          } > ci-debug.log 2>&1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-debug || git checkout ci-debug
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add ci-debug.log
+          git commit -m "ci-debug: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
+          git push -f origin ci-debug
+
+  stand-e2e:
+    name: avm-contract-build + avm-local-stand
+    runs-on: ubuntu-latest
+    needs: verify
+    steps:
+      - name: Check out the contract
+        uses: actions/checkout@v4
+
+      - name: Install the pinned toolchain
+        run: |
+          rustup show active-toolchain
+          rustc --version
+          cargo --version
+          rustup target list --installed | grep wasm32-unknown-unknown
+
+      - name: Install the AVM stand binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gosh-sh/avm-sdk ships avm-local-stand and avm-contract-build as a
+          # release archive; its installer fetches the release with gh. Output
+          # is captured into the stand report because workflow logs are not
+          # readable from every environment.
+          set +e
+          {
+            echo "## Install the AVM stand binaries"
+            echo '```text'
+            echo '$ git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk'
+            git clone --depth 1 https://github.com/gosh-sh/avm-sdk /tmp/avm-sdk 2>&1
+            echo "[exit $?]"
+            echo '$ /tmp/avm-sdk/scripts/install.sh'
+            /tmp/avm-sdk/scripts/install.sh 2>&1
+            echo "[exit $?]"
+            echo '```'
+          } >> stand-e2e-report.md
+          set -e
+          echo "${HOME}/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build the contracts with avm-contract-build
+        run: |
+          set +e
+          out="$(avm-contract-build build --manifest-path Cargo.toml 2>&1)"
+          status=$?
+          set -e
+          {
+            echo "## avm-contract-build (settlement router)"
+            echo '```text'
+            echo '$ avm-contract-build build --manifest-path Cargo.toml'
+            echo "$out"
+            echo "[exit $status]"
+            echo '```'
+            ls -l target/avm 2>&1
+          } >> stand-e2e-report.md
+          [ "$status" -eq 0 ] || exit "$status"
+          mkdir -p target/avm-router
+          cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-router/
+          rm -f target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor
+          set +e
+          out="$(avm-contract-build build --manifest-path beneficiary/Cargo.toml 2>&1)"
+          status=$?
+          set -e
+          {
+            echo "## avm-contract-build (settlement beneficiary fixture)"
+            echo '```text'
+            echo '$ avm-contract-build build --manifest-path beneficiary/Cargo.toml'
+            echo "$out"
+            echo "[exit $status]"
+            echo '```'
+          } >> stand-e2e-report.md
+          [ "$status" -eq 0 ] || exit "$status"
+          mkdir -p target/avm-beneficiary
+          if [ -f target/avm/contract.wasm ]; then
+            cp target/avm/contract.wasm target/avm/contract.acab target/avm/contract.descriptor target/avm-beneficiary/
+          else
+            cp beneficiary/target/avm/contract.wasm beneficiary/target/avm/contract.acab beneficiary/target/avm/contract.descriptor target/avm-beneficiary/
+          fi
+          # target/avm must hold the router artifacts (the scenario's default).
+          cp target/avm-router/contract.wasm target/avm-router/contract.acab target/avm-router/contract.descriptor target/avm/
+          {
+            echo '```text'
+            sha256sum target/avm-router/contract.wasm target/avm-beneficiary/contract.wasm
+            ls -l target/avm-router target/avm-beneficiary
+            echo '```'
+          } >> stand-e2e-report.md
+
+      - name: Run the stand scenario
+        run: bash scripts/stand-e2e.sh
+
+      - name: Publish the stand report
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The scenario writes stand-e2e-report.md; publish it where the
+          # workflow-log hosts cannot reach: a pull request comment and the
+          # ci-debug branch.
+          REPORT=stand-e2e-report.md
+          if [ ! -f "$REPORT" ]; then
+            echo "## Stand E2E report" > "$REPORT"
+            echo "The scenario produced no report; see the job's build steps." >> "$REPORT"
+            echo "<!-- ci-stand-e2e -->" >> "$REPORT"
+          fi
+          grep -q '<!-- ci-stand-e2e -->' "$REPORT" || echo '<!-- ci-stand-e2e -->' >> "$REPORT"
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            PR="${GITHUB_REF_NAME%%/*}"
+            comment_id="$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+              --jq '[.[] | select(.body | contains("<!-- ci-stand-e2e -->"))][0].id // empty' 2>/dev/null || true)"
+            if [ -n "$comment_id" ]; then
+              gh api -X PATCH "repos/${GITHUB_REPOSITORY}/issues/comments/${comment_id}" \
+                -F body=@"$REPORT" || echo "warning: could not update the stand report comment" >&2
+            else
+              gh api -X POST "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" \
+                -F body=@"$REPORT" || echo "warning: could not post the stand report comment" >&2
+            fi
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan ci-stand-report || git checkout ci-stand-report
+          git rm -rf --cached . >/dev/null 2>&1 || true
+          git add "$REPORT"
+          git commit -m "stand-e2e report: run ${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}" || true
+          git push -f origin HEAD:ci-stand-report

@@ -1,0 +1,269 @@
+# Canonical AVM contract metadata for the settlement router.
+#
+# `avm-contract-build` reads this file from the contract directory, validates it
+# against the compiled WASM, and emits `contract.acab` (canonical ABI bytes) and
+# `contract.descriptor` (canonical code descriptor) next to `contract.wasm`.
+
+[descriptor]
+execution_mode = "message_isolated"
+state_schema_id = "5e7172149c03ab582f67d410c8b359e27a1406df3b95e28c71a46d0f8b23c196"
+
+[abi]
+# The state root is one opaque fixed-size image. The router never answers with a
+# `DataPatchList`, so the declared length is the length every successful
+# execution writes. See `src/state.rs` for the byte-level layout.
+state_root_type_id = 1
+
+# --- types -------------------------------------------------------------------
+
+[[abi.types]]
+id = 1
+kind = "fixed_bytes"
+name = "settlement_router_state"
+len = 448
+
+# settle: route_key[8] | beneficiary_dapp[32] | beneficiary_account[32]
+[[abi.types]]
+id = 2
+kind = "fixed_bytes"
+name = "settlement_router_settle_args"
+len = 72
+
+# route.set: route_key[8] | dapp[32] | account[32] | min_value[16]
+[[abi.types]]
+id = 3
+kind = "fixed_bytes"
+name = "settlement_router_route_args"
+len = 88
+
+# route.clear and the delivery callback: route_key[8]
+[[abi.types]]
+id = 4
+kind = "fixed_bytes"
+name = "settlement_router_route_key"
+len = 8
+
+# --- event field types -------------------------------------------------------
+#
+# Event classes are `hash_u64_le(event name)`, exactly like method ids.
+
+[[abi.types]]
+id = 5
+kind = "u64"
+name = "event_count"
+
+[[abi.types]]
+id = 6
+kind = "u128"
+name = "event_amount"
+
+[[abi.types]]
+id = 7
+kind = "address"
+name = "event_address"
+
+# `settlement.router.settled` carries the cause message hash in `origin`.
+[[abi.types]]
+id = 8
+kind = "fixed_bytes"
+name = "event_msg_hash"
+len = 32
+
+# One-byte boolean flags (`set`, `settled`): the canonical event encoding
+# carries them as single bytes.
+[[abi.types]]
+id = 9
+kind = "fixed_bytes"
+name = "event_bool_flag"
+len = 1
+
+# --- methods -----------------------------------------------------------------
+#
+# `settlement.router.completed` is the callback handler named by the router's own
+# callback request; it is delivered as an internal callback, not called
+# externally. `withdraw` and `version` take no arguments.
+#
+# Method ids are `hash_u64_le(name)` (see `docs/method-ids.md`); `src/wire.rs`
+# holds the derived constants the contract branches on. Names are at most three
+# dot-separated segments — `avm-contract-build` rejects longer ones with
+# `InvalidName`, which is why the table methods are `settlement.route.*`.
+
+[[abi.methods]]
+name = "settlement.router.settle"
+input_type_id = 2
+
+[[abi.methods]]
+name = "settlement.router.completed"
+input_type_id = 4
+
+[[abi.methods]]
+name = "settlement.route.set"
+input_type_id = 3
+
+[[abi.methods]]
+name = "settlement.route.clear"
+input_type_id = 4
+
+[[abi.methods]]
+name = "settlement.router.withdraw"
+
+[[abi.methods]]
+name = "settlement.router.version"
+
+# --- events ------------------------------------------------------------------
+#
+# Field order matches the canonical encoding order in `src/router.rs`. Every
+# event class is `hash_u64_le(name)` and is re-derived by
+# `scripts/check_consistency.py` on each run.
+
+[[abi.events]]
+name = "settlement.router.routed"
+
+[[abi.events.fields]]
+id = 1
+type_id = 7
+name = "beneficiary"
+
+[[abi.events.fields]]
+id = 2
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 3
+type_id = 5
+name = "routed_count"
+
+[[abi.events.fields]]
+id = 4
+type_id = 6
+name = "value_main"
+
+[[abi.events]]
+name = "settlement.router.route_changed"
+
+[[abi.events.fields]]
+id = 1
+type_id = 5
+name = "route_count"
+
+[[abi.events.fields]]
+id = 2
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 3
+type_id = 9
+name = "set"
+
+[[abi.events]]
+name = "settlement.router.withdrawn"
+
+[[abi.events.fields]]
+id = 1
+type_id = 6
+name = "balance_main"
+
+[[abi.events.fields]]
+id = 2
+type_id = 5
+name = "extra_count"
+
+[[abi.events.fields]]
+id = 3
+type_id = 7
+name = "owner"
+
+[[abi.events]]
+name = "settlement.router.settled"
+
+[[abi.events.fields]]
+id = 1
+type_id = 5
+name = "completed_count"
+
+[[abi.events.fields]]
+id = 2
+type_id = 5
+name = "failed_count"
+
+[[abi.events.fields]]
+id = 3
+type_id = 8
+name = "origin"
+
+[[abi.events.fields]]
+id = 4
+type_id = 4
+name = "route_key"
+
+[[abi.events.fields]]
+id = 5
+type_id = 9
+name = "settled"
+
+[[abi.events.fields]]
+id = 6
+type_id = 5
+name = "status_code"
+
+# --- errors ------------------------------------------------------------------
+#
+# The SDK reserves status codes 1..1000 for the runtime, so every contract code
+# is 0 or at least 1000.
+
+[[abi.errors]]
+status_code = 1600
+name = "invalid_settlement"
+message = "settlement arguments, beneficiary, or transferred value are invalid"
+
+[[abi.errors]]
+status_code = 1601
+name = "unknown_route"
+message = "no routing table entry matches the requested route key"
+
+[[abi.errors]]
+status_code = 1602
+name = "invalid_router_state"
+message = "router state image is malformed, exhausted, or in the wrong output mode"
+
+[[abi.errors]]
+status_code = 1603
+name = "unauthorized"
+message = "caller is not authorized for this method"
+
+[[abi.errors]]
+status_code = 1604
+name = "invalid_callback"
+message = "callback context, route key, or result body is malformed"
+
+[[abi.errors]]
+status_code = 1605
+name = "invalid_route_args"
+message = "route arguments are invalid or the routing table is full"
+
+[[abi.errors]]
+status_code = 1606
+name = "invalid_version_probe"
+message = "version probe requires one external empty-body call on version 1"
+
+[[abi.errors]]
+status_code = 1607
+name = "invalid_code_upgrade"
+message = "code upgrade authorization or migration payload is invalid"
+
+[[abi.errors]]
+status_code = 1608
+name = "nothing_to_withdraw"
+message = "the router holds no main value and no extra currency"
+
+[[abi.errors]]
+status_code = 1609
+name = "event_encoding"
+message = "an event field list could not be canonically encoded"
+
+[[abi.errors]]
+status_code = 1610
+name = "settlement_pending"
+message = "a routed settlement is still awaiting its callback"

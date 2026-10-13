@@ -1,0 +1,8 @@
+[toolchain]
+# Pinned to the toolchain the AVM SDK distribution is built with, so the
+# contract's WASM matches what `avm-contract-build` expects and its
+# reproducibility check is meaningful.
+channel = "1.93.0"
+components = ["clippy", "rustfmt"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
