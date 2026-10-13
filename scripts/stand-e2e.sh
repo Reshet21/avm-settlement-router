@@ -278,6 +278,23 @@ if ! call_ok "$WORK/route-$OWNER_IDENTITY.json"; then
 fi
 log "args encoding in use: $HEX_STYLE hex; route.set: $(jq -c . "$WORK/route-$OWNER_IDENTITY.json" 2>/dev/null | head -c 300)"
 
+# Asserts the settle's delivery outcome, not just `status: ok`: settled=true,
+# status_code=0, completed_count growth, failed_count 0, and the beneficiary's
+# payout event in the journal.
+assert_delivery() {
+    local settle_json="$1" value="$2" routed="$3" completed="$4"
+    stand "$WORK/events.json" avm-local-stand events --state "$STATE" \
+        --wasmtime-profile "$PROFILE" || true
+    if python3 "$ROOT/scripts/assert_delivery.py" "$settle_json" "$WORK/events.json" \
+        "$routed" "$completed" "$value" >>"$REPORT" 2>&1; then
+        log "delivery assertion (value $value): $(tail -n 1 "$REPORT")"
+    else
+        printf 'FAILED: delivery did not complete for settle value %s\n' "$value" \
+            | tee -a "$REPORT"
+        failures=$((failures + 1))
+    fi
+}
+
 heading "settle (user identity)"
 SETTLE_ARGS="${ROUTE_KEY_HEX}${BENEDAPP}${BENEACCT}"
 ARGS_JSON="$(args_json_for "$SETTLE_ARGS")"
@@ -289,7 +306,11 @@ if ! call_ok "$WORK/settle.json"; then
 fi
 log "settle: $(jq -c . "$WORK/settle.json" 2>/dev/null | head -c 300)"
 
-heading "delivery callback (in flight)"
+heading "delivery result: settled, not a bounce"
+STEP=$((STEP + 10))
+assert_delivery "$WORK/settle.json" "$SETTLE_VALUE" 1 1
+
+heading "inspect after the delivery callback"
 STEP=$((STEP + 10))
 stand "$WORK/inspect-callback.json" avm-local-stand inspect --state "$STATE" \
     --wasmtime-profile "$PROFILE" || true
@@ -303,6 +324,10 @@ if ! call_ok "$WORK/settle2.json"; then
     failures=$((failures + 1))
 fi
 log "second settle: $(jq -c . "$WORK/settle2.json" 2>/dev/null | head -c 300)"
+
+heading "delivery result of the second settle"
+STEP=$((STEP + 10))
+assert_delivery "$WORK/settle2.json" $((SETTLE_VALUE + 200)) 2 2
 
 heading "inspect, events, and replay"
 STEP=$((STEP + 10))

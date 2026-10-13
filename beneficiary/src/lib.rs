@@ -2,11 +2,16 @@
 //!
 //! A `MessageIsolated` Rust contract for the Acki Nacki AVM that plays the
 //! routed beneficiary in the settlement router's delivery flow: it accepts the
-//! platform's settlement-delivery envelope on
-//! `settlement.beneficiary.receive`, records the delivered value as a
-//! `settlement.beneficiary.payout` event, and answers the delivery callback so
-//! the router's `settlement.router.completed` handler can close the
-//! settlement.
+//! router's settlement delivery on `settlement.beneficiary.receive`, records
+//! the delivered value as a `settlement.beneficiary.payout` event, and answers
+//! the delivery callback so the router's `settlement.router.completed` handler
+//! can close the settlement.
+//!
+//! Wire format (proven against the router's `settle` intent and the SDK
+//! codecs): the delivery body is exactly the 8-byte route key the router
+//! extracted from the `settle` arguments — `OutboundIntent::body` is serialized
+//! verbatim and `InternalMessage::body` is decoded verbatim, with no platform
+//! envelope around it.
 //!
 //! The contract is deterministic and stateless in practice: its 8-byte state
 //! image is a reservation it never reads. Method id and event class follow the
@@ -17,8 +22,8 @@
 #![forbid(unsafe_code)]
 
 use avm_contract_sdk::encode_event_fields;
-use avm_contract_sdk::CanonicalMessage;
 use avm_contract_sdk::Caller;
+use avm_contract_sdk::CanonicalMessage;
 use avm_contract_sdk::Contract;
 use avm_contract_sdk::EventField;
 use avm_contract_sdk::EventIntent;
@@ -31,10 +36,10 @@ use avm_contract_sdk::StateUpdate;
 
 /// `settlement.beneficiary.receive` — the class the router's delivery intent
 /// carries (`hash_u64_le` of the method name).
-const RECEIVE_METHOD_ID: u64 = 0x0ef6_cc14_d234_ec6f;
+pub const RECEIVE_METHOD_ID: u64 = 0x0ef6_cc14_d234_ec6f;
 
 /// `settlement.beneficiary.payout` — `hash_u64_le` of the event name.
-const PAYOUT_EVENT_CLASS: u64 = 0x5445_efb8_8ad3_943b;
+pub const PAYOUT_EVENT_CLASS: u64 = 0x5445_efb8_8ad3_943b;
 
 /// Unknown method id.
 const UNKNOWN_METHOD: u32 = 1601;
@@ -42,8 +47,12 @@ const UNKNOWN_METHOD: u32 = 1601;
 const INVALID_STATE: u32 = 1602;
 /// The caller may not invoke this method.
 const UNAUTHORIZED: u32 = 1603;
-/// The message body is not a settlement delivery envelope.
+/// The message body is not the 8-byte route key of a settlement delivery.
 const INVALID_DELIVERY: u32 = 1604;
+/// The delivery carries no callback request to answer.
+const MISSING_CALLBACK: u32 = 1605;
+/// A deploy message is not a settlement delivery.
+const DEPLOY_NOT_A_DELIVERY: u32 = 1606;
 
 /// The settlement beneficiary fixture contract.
 pub struct SettlementBeneficiary;
@@ -66,9 +75,8 @@ impl Contract for SettlementBeneficiary {
 
 /// Accepts one settlement delivery and answers its callback.
 ///
-/// The platform wraps the router's route-key body into the delivery envelope
-/// `route_key[8] | settle_from[8] | settle_to[8] | payload_len u32 | payload`.
-/// The fixture echoes the route key in the callback result (the router does not
+/// The router's `settle` sends the route key as the whole delivery body. The
+/// fixture echoes the route key in the callback result (the router does not
 /// parse it — the callback header carries the outcome) and reports the
 /// delivered value in the payout event.
 fn receive(input: &MessageInput<'_>) -> MessageOutput {
@@ -76,19 +84,23 @@ fn receive(input: &MessageInput<'_>) -> MessageOutput {
     else {
         return MessageOutput::failure(UNAUTHORIZED);
     };
-    if input.message.is_deploy() || !message.has_callback_request() {
-        return MessageOutput::failure(INVALID_DELIVERY);
+    if input.message.is_deploy() {
+        return MessageOutput::failure(DEPLOY_NOT_A_DELIVERY);
+    }
+    if !message.has_callback_request() {
+        return MessageOutput::failure(MISSING_CALLBACK);
     }
     let body = input.message.body();
-    if body.len() < 28 {
+    if body.len() != 8 {
         return MessageOutput::failure(INVALID_DELIVERY);
     }
     let mut route_key = [0u8; 8];
-    route_key.copy_from_slice(&body[..8]);
+    route_key.copy_from_slice(body);
 
+    // `encode_event_fields` requires strictly ascending names.
     let fields = match encode_event_fields(&[
-        EventField { name: "route_key".into(), value: EventValue::Data(Vec::from(route_key)) },
         EventField { name: "amount".into(), value: EventValue::U128(input.message.value_main()) },
+        EventField { name: "route_key".into(), value: EventValue::Data(Vec::from(route_key)) },
     ]) {
         Ok(fields) => fields,
         Err(_) => return MessageOutput::failure(INVALID_STATE),
@@ -106,8 +118,3 @@ fn receive(input: &MessageInput<'_>) -> MessageOutput {
     output.callback_result_body = Vec::from(route_key);
     output
 }
-
-// The bounded guest arena holds the live input and output allocations for one
-// entrypoint call. 64 KiB is far above this fixture's largest frame: an
-// 8-byte state image, one payout event, and the 8-byte callback answer.
-avm_contract_sdk::export_message_contract!(SettlementBeneficiary, arena_bytes = 65_536);

@@ -46,6 +46,9 @@ src/state.rs            fixed-size state image and its codec
 src/wire.rs             method ids, event classes, status codes, body codecs
 src/router.rs           routing decisions and effect construction
 tests/settlement_router.rs   native tests over canonical ACMI frames
+beneficiary/             settlement receiver fixture for the delivery round trip
+scripts/stand-e2e.sh     on-stand end-to-end scenario
+scripts/assert_delivery.py   asserts settled=true / status_code=0 / payout
 vendor/avm-contract-sdk      the SDK crate, vendored verbatim (MIT)
 docs/method-ids.md      READ THIS before deploying
 docs/using-the-stand.md deploy / call / upgrade walkthrough
@@ -139,9 +142,11 @@ by side; the hang channel is never exercised in tests because it never returns.
 
 - **Proven by CI** (GitHub Actions, pinned Rust 1.93.0, run `contract` on every
   push): `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` on
-  host and `wasm32-unknown-unknown`, 48 tests passing — 12 vendored SDK
-  canonical-ABI tests, 25 router integration tests over canonical `ACMI`
-  frames, 11 codec unit tests — plus a `wasm32-unknown-unknown` release build
+  host and `wasm32-unknown-unknown`, 52 tests passing — 12 vendored SDK
+  canonical-ABI tests, 29 router integration tests over canonical `ACMI`
+  frames (including a full router → beneficiary → router delivery round trip
+  over the router's real `settle` intent), 11 codec unit tests — plus a
+  `wasm32-unknown-unknown` release build
   (50 KiB), a guest-export check, and a build-reproducibility check. The same
   integration suite also passes with `AVM_E2E_FAILURE_FLOW=1` (the failure-flow
   fixture build), which is compiled for `wasm32-unknown-unknown` as well. The
@@ -161,8 +166,13 @@ by side; the hang channel is never exercised in tests because it never returns.
   callback / `inspect` / `replay`): executed by the `stand-e2e` CI job against
   the released `avm-local-stand` and `avm-contract-build` binaries on every
   push, with the full command log posted to the pull request as
-  `stand-e2e-report.md`. The authoring sandbox cannot download those binaries,
-  so the job — not the author — is what closes this gap.
+  `stand-e2e-report.md`. The scenario asserts the delivery *outcome*, not just
+  `status: ok` per command: `scripts/assert_delivery.py` checks
+  `settlement.router.settled` with `settled: true` and `status_code: 0`,
+  `completed_count` growth with `failed_count = 0`, and the beneficiary's
+  `settlement.beneficiary.payout` event with the settled value. The authoring
+  sandbox cannot download those binaries, so the job — not the author — is what
+  closes this gap.
 
 ## Design notes
 

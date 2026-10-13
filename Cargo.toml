@@ -19,6 +19,11 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 avm-contract-sdk = { path = "vendor/avm-contract-sdk" }
 
+[dev-dependencies]
+# The beneficiary fixture plays the routed receiver in the delivery round-trip
+# test: the router's real `settle` intent is delivered to it verbatim.
+avm-settlement-beneficiary = { path = "beneficiary" }
+
 [profile.release]
 # Deterministic, size-conscious release build. `avm-contract-build` compiles the
 # contract twice and rejects non-reproducible output, so nothing here may depend

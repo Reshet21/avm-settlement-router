@@ -30,6 +30,7 @@ use avm_contract_sdk::MessageOutput;
 use avm_contract_sdk::StateOutputMode;
 use avm_contract_sdk::CODE_UPGRADE_METHOD_ID;
 
+use avm_settlement_beneficiary::SettlementBeneficiary;
 use avm_settlement_router::initial_state_bytes;
 use avm_settlement_router::router;
 use avm_settlement_router::state::Route;
@@ -437,6 +438,81 @@ fn init_installs_the_deployers_key_when_the_deploy_body_is_empty() {
     let decoded = RouterState::from_bytes(&state_of(&output)).expect("initial image decodes");
     assert_eq!(decoded.owner_pubkey, deployer);
     assert_ne!(decoded.owner_pubkey, router::owner_pubkey());
+}
+
+/// The router's real `settle` intent is delivered to the beneficiary fixture
+/// verbatim — the 8-byte route key is the whole delivery body, with no platform
+/// envelope — the fixture answers the callback, and the answer completes the
+/// settlement on the router. This is the wire-level round trip the stand
+/// scenario drives end to end.
+#[test]
+fn the_beneficiary_fixture_answers_the_routers_delivery() {
+    let routed = external_input(
+        STRANGER_PUBKEY,
+        avm_settlement_router::wire::SETTLE_METHOD_ID,
+        500,
+        &settle_body(),
+        0,
+        &[],
+        &[],
+        &seeded_state(),
+    );
+    let output = run(&routed);
+    assert_eq!(output.status_code, 0);
+    let intent = &output.outbound_intents[0];
+    assert_eq!(intent.body, ROUTE_KEY);
+    let handler = output.callback_intents[0].handler_method_id;
+
+    // Build the beneficiary's delivery frame from the router's own intent.
+    let delivery = internal_message(
+        router_address(),
+        beneficiary_address(),
+        avm_settlement_router::wire::SETTLEMENT_DELIVERY_METHOD_ID,
+        intent.value_main,
+        &intent.body,
+        &intent.extra,
+        None,
+        Some(handler),
+        false,
+    );
+    let bytes = message_input(
+        0,
+        router_address().dapp_id,
+        router_address().account_id,
+        [0; 32],
+        beneficiary_address(),
+        0,
+        &[],
+        &[0u8; 8],
+        &delivery,
+    );
+    let input = decode_message_input(&bytes).expect("delivery frame must decode");
+    let received = SettlementBeneficiary::process_message(input);
+    assert_eq!(received.status_code, 0, "the fixture must accept the router's delivery");
+    assert_eq!(received.callback_result_body, ROUTE_KEY);
+    assert_eq!(received.event_intents.len(), 1);
+    assert_eq!(
+        received.event_intents[0].event_class,
+        avm_settlement_beneficiary::PAYOUT_EVENT_CLASS
+    );
+
+    // The fixture's answer closes the settlement on the router.
+    let answer = internal_input(
+        beneficiary_address(),
+        avm_settlement_router::wire::CALLBACK_METHOD_ID,
+        0,
+        &received.callback_result_body,
+        Some(([0xcd; 32], 0)),
+        None,
+        &state_of(&output),
+    );
+    let completed = run(&answer);
+    assert_eq!(completed.status_code, 0);
+    let state = RouterState::from_bytes(&state_of(&completed)).expect("image decodes");
+    assert_eq!(state.routed_count, 1);
+    assert_eq!(state.completed_count, 1);
+    assert_eq!(state.failed_count, 0);
+    assert_eq!(state.last_status, 0);
 }
 
 #[test]

@@ -151,8 +151,11 @@ avm-local-stand call \
 
 Expect status 0, one outbound internal message to the routed beneficiary
 carrying the full `value_main = 500`, a callback request, and a
-`settlement.router.routed` external event. `routed_count` becomes 1 and
-`last_status` becomes `AWAITING_CALLBACK` (`u32::MAX`).
+`settlement.router.routed` external event. The stand delivers the message and
+its callback within the same call, so the returned state already shows the
+closed settlement: `routed_count = 1`, `completed_count = 1`, `failed_count = 0`,
+`last_status = 0`. The response also carries the closing
+`settlement.router.settled` event with `settled: true` and `status_code: 0`.
 
 The `--fuel-fee-shells 2000` reserve on the *call* funds the router's own
 execution. The router separately proposes `CROSS_DAPP_FUEL_RESERVE` on the
@@ -160,21 +163,30 @@ outbound intent, because the callback leg is always chargeable. See the SDK's
 `docs/fuel-and-fees.md`: a same-DApp local-free route commits
 `fuel_fee_shells = 0` and never debits that reserve.
 
-## Inspect The Callback
+## Inspect The Delivery Result
 
-The beneficiary's execution determines whether the callback reports success or a
-bounce. With no receiver contract deployed at the beneficiary address, the
-delivery fails and the router records it as a bounce.
+The scenario deploys the beneficiary fixture (`beneficiary/`) at the routed
+address, so the delivery is a success: the fixture accepts the router's 8-byte
+route-key body, emits `settlement.beneficiary.payout` with the delivered value,
+and answers the callback.
 
 ```bash
 avm-local-stand inspect --state "$AVM_STATE" --wasmtime-profile "$AVM_PROFILE"
 avm-local-stand events  --state "$AVM_STATE" --wasmtime-profile "$AVM_PROFILE"
+python3 scripts/assert_delivery.py settle.json events.json 1 1 500
 ```
 
-Look for `settlement.router.settled` with `settled: false` and
-`status_code` equal to the delivery failure, plus `failed_count = 1`. Deploy a
-receiver at the beneficiary address to exercise the success path, which reports
-`settled: true`, `status_code: 0`, and `completed_count = 1`.
+`scripts/assert_delivery.py` fails loudly unless the *outcome* is a completed
+delivery: `settlement.router.settled` with `settled: true` and
+`status_code: 0`, `completed_count = 1` with `failed_count = 0` in both the
+event fields and the state image, and a `settlement.beneficiary.payout` event
+carrying the route key and the settled value. `scripts/stand-e2e.sh` runs it
+after both settles of the scenario.
+
+The bounce path — a delivery with no receiver at the beneficiary address — is
+covered by the integration tests instead: `settle` still routes, the callback
+carries the receiver's failure status, and `settlement.router.settled` reports
+`settled: false` with `failed_count = 1`.
 
 ## Withdraw And Replay
 
