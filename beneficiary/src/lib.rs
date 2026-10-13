@@ -118,3 +118,11 @@ fn receive(input: &MessageInput<'_>) -> MessageOutput {
     output.callback_result_body = Vec::from(route_key);
     output
 }
+
+// The guest entry points (`avm_guest_alloc`, `init`, `process_message`) are
+// exported only for the wasm32 target the stand executes: the router's native
+// integration tests link both contracts into one test binary, and two
+// unguarded exports would collide at link time. `avm-contract-build` compiles
+// for `wasm32-unknown-unknown`, so the built contract always carries them.
+#[cfg(target_arch = "wasm32")]
+avm_contract_sdk::export_message_contract!(SettlementBeneficiary, arena_bytes = 65_536);
